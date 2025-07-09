@@ -163,7 +163,7 @@
             }
 
             bb() {
-              nix build && sudo ./test_power.sh ov01a1b_register_test
+              nix build && sudo ./test_module.sh ov01a1b_register_test
             }
             
           '';

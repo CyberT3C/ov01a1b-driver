@@ -81,10 +81,12 @@ static int read_register(struct ov01a1b *ov01a1b, u16 reg, u8 *val)
 }
 
 // Test basic sensor registers
-static int test_sensor_registers(struct ov01a1b *sensor)
+static void test_sensor_registers(struct ov01a1b *sensor)
 {
     u8 val;
-    
+
+    struct device *dev = &sensor->client->dev;
+
     // Try reading various registers to understand the sensor state
     read_register(sensor, 0x0100, &val);  // Mode select (stream on/off)
     dev_info(dev, "Mode select (0x0100) = 0x%02x\n", val);
@@ -92,7 +94,8 @@ static int test_sensor_registers(struct ov01a1b *sensor)
     read_register(sensor, 0x0103, &val);  // Software reset
     dev_info(dev, "Software reset (0x0103) = 0x%02x\n", val);
     
-    /* Test read from known registers */
+
+    // I know
     read_register(sensor, 0x3001, &val);
     dev_info(dev, "Reg 0x3001 = 0x%02x\n", val);
     
