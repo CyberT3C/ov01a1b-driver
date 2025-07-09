@@ -15,20 +15,34 @@
 #include <linux/clk.h>
 
 #define DRIVER_NAME "ov01a1b_power_test"
+#define CHIP_ID 0x560141
 
 /* Common OmniVision I2C addresses to try */
-static const u8 possible_addresses[] = {
-    0x36, /* OV01A10 uses this */
-    0x3c,
-    0x10,
-    0x20,
-    0x30,
-    0x42,
-    0x24,
-    0x6c,
-};
 
-struct ov01a1b_power {
+/*
+Power-On:                     Power-Off:
+1. Regulators ON       →      4. Regulators OFF
+2. Clock ON           →      3. Clock OFF  
+3. Powerdown = 0      →      2. Powerdown = 1
+4. Reset 1→0          →      1. Reset = 1
+5. Wait for boot      →      nop 
+*/
+
+/* seuqnce for v4l2 
+ov01a1b_probe()
+    ├── Hardware init (GPIOs, clocks, regulators)
+    ├── Power on
+    ├── Check chip ID
+    ├── v4l2_i2c_subdev_init()
+    ├── Initialize controls (v4l2_ctrl_handler)
+    ├── Media entity init
+    ├── v4l2_async_register_subdev()
+    └── Power off (optional)
+*/
+static const u8 address = 0x10;
+
+
+struct ov01a1b {
     struct i2c_client *client;
     struct clk *xvclk;
     struct gpio_desc *reset_gpio;
@@ -79,11 +93,36 @@ static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
     return 0;
 }
 
-static int ov01a1b_power_on_sequence(struct ov01a1b_power *power)
+static void ov01a1b_power_off(struct ov01a1b *power)
+{
+
+    struct device *dev = &power->client->dev;
+    dev_info(dev, "startign power off sequence...\n");
+    
+    /* Step 1: Assert reset (put sensor in reset) */
+    if (power->reset_gpio)
+        gpiod_set_value_cansleep(power->reset_gpio, 1);
+
+    /* Small delay to ensure reset is registered */
+    usleep_range(1000, 1500);
+    
+    /* Step 2: Assert powerdown */
+    if (power->powerdown_gpio)
+        gpiod_set_value_cansleep(power->powerdown_gpio, 1);
+    
+    /* Step 3: Disable clock */
+    clk_disable_unprepare(power->xvclk);
+    
+    /* Step 4: Disable regulators (reverse order!) */
+    regulator_bulk_disable(ARRAY_SIZE(power->supplies),
+                          power->supplies);
+}
+
+
+static int ov01a1b_power_on_sequence(struct ov01a1b *power)
 {
     struct device *dev = &power->client->dev;
     int ret;
-    int i;
     
     dev_info(dev, "Starting OV01A10-style power sequence...\n");
     
@@ -145,14 +184,11 @@ static int ov01a1b_power_on_sequence(struct ov01a1b_power *power)
     dev_info(dev, "Waiting for sensor initialization...\n");
     msleep(10);
     
-    /* Step 6: Try to detect sensor on various addresses */
-    dev_info(dev, "Probing I2C addresses...\n");
-    for (i = 0; i < ARRAY_SIZE(possible_addresses); i++) {
-        ret = ov01a1b_check_i2c_address(power->client, possible_addresses[i]);
-        if (ret == 0) {
-            dev_info(dev, "Found device at address 0x%02x!\n", 
-                     possible_addresses[i]);
-        }
+    /* Step 6: test address */
+    dev_info(dev, "Probing I2C address...\n");
+    ret = ov01a1b_check_i2c_address(power->client, address);
+    if (ret == 0) {
+        dev_info(dev, "Found device at address 0x%02x!\n", address);
     }
     
     return 0;
@@ -161,7 +197,7 @@ static int ov01a1b_power_on_sequence(struct ov01a1b_power *power)
 static int ov01a1b_power_test_probe(struct i2c_client *client)
 {
     struct device *dev = &client->dev;
-    struct ov01a1b_power *power;
+    struct ov01a1b *power;
     int ret;
     
     dev_info(dev, "=== OV01A1B Power Test Probe ===\n");
@@ -238,13 +274,11 @@ static int ov01a1b_power_test_probe(struct i2c_client *client)
     /* Execute power on sequence */
     ret = ov01a1b_power_on_sequence(power);
     
-    /* Also try direct I2C scan */
-    dev_info(dev, "\nDirect I2C scan on bus %d:\n", client->adapter->nr);
-    /* This would need i2c-dev loaded and proper implementation */
     
     dev_info(dev, "\n=== Test Complete ===\n");
-    dev_info(dev, "Check dmesg and try: sudo i2cdetect -y -r %d\n", 
-             client->adapter->nr);
+    dev_info(dev, "Check dmesg  %d\n", client->adapter->nr);
+
+    ov01a1b_power_off(power);
     
     /* Always return error to avoid binding */
     return -ENODEV;
@@ -280,6 +314,6 @@ static struct i2c_driver ov01a1b_power_test_driver = {
 module_i2c_driver(ov01a1b_power_test_driver);
 
 MODULE_LICENSE("GPL v2");
-MODULE_AUTHOR("Your Name");
+MODULE_AUTHOR("Niklas Bartz");
 MODULE_DESCRIPTION("OV01A1B power sequence test based on OV01A10");
 
