@@ -116,6 +116,8 @@ static void ov01a1b_power_off(struct ov01a1b *power)
     /* Step 4: Disable regulators (reverse order!) */
     regulator_bulk_disable(ARRAY_SIZE(power->supplies),
                           power->supplies);
+
+    dev_info(dev, "Power off complete\n");
 }
 
 
@@ -200,7 +202,7 @@ static int ov01a1b_power_test_probe(struct i2c_client *client)
     struct ov01a1b *power;
     int ret;
     
-    dev_info(dev, "=== OV01A1B Power Test Probe ===\n");
+    dev_info(dev, "\n=== OV01A1B Power Test Probe ===\n");
     dev_info(dev, "Client address: 0x%02x\n", client->addr);
     dev_info(dev, "Adapter: %s\n", client->adapter->name);
     
@@ -273,12 +275,28 @@ static int ov01a1b_power_test_probe(struct i2c_client *client)
     
     /* Execute power on sequence */
     ret = ov01a1b_power_on_sequence(power);
-    
-    
-    dev_info(dev, "\n=== Test Complete ===\n");
-    dev_info(dev, "Check dmesg  %d\n", client->adapter->nr);
 
+
+    ret = ov01a1b_check_i2c_address(power->client, address);
+    if (ret == 0) {
+        dev_info(dev, "Device is working at address 0x%02x!\n", 
+                 address);
+    }
+    
+
+    /* Execute power off sequence */
     ov01a1b_power_off(power);
+    msleep(10);
+    /* Try to read chip ID - should fail */
+
+    ret = ov01a1b_check_i2c_address(power->client, address);
+    if (ret == 0) {
+      dev_err(dev, "ERROR: Sensor still responding after power off!\n");
+    } else {
+        dev_info(dev, "Good: Sensor not responding after power off\n");
+    }
+
+    dev_info(dev, "\n=== Test Complete ===\n");
     
     /* Always return error to avoid binding */
     return -ENODEV;
