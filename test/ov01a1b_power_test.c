@@ -32,36 +32,45 @@ struct ov01a1b_power {
     u32 xvclk_freq;
 };
 
+
+
 static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
 {
-    struct i2c_msg msg;
-    u8 buf[2];
+    struct i2c_msg msg[2];
+    u8 reg_addr[2];
+    u8 chip_id[3];
     int ret;
     
-    /* Try to read chip ID register at 0x300a */
-    buf[0] = 0x30;
-    buf[1] = 0x0a;
+    /* Read chip ID registers 0x300a, 0x300b, 0x300c */
+    reg_addr[0] = 0x30;
+    reg_addr[1] = 0x0a;
     
-    msg.addr = addr;
-    msg.flags = 0;
-    msg.len = 2;
-    msg.buf = buf;
+    msg[0].addr = addr;
+    msg[0].flags = 0;
+    msg[0].len = 2;
+    msg[0].buf = reg_addr;
     
-    ret = i2c_transfer(client->adapter, &msg, 1);
+    msg[1].addr = addr;
+    msg[1].flags = I2C_M_RD;
+    msg[1].len = 3;  /* Read 3 bytes at once */
+    msg[1].buf = chip_id;
+    
+    ret = i2c_transfer(client->adapter, msg, 2);
     if (ret < 0) {
         return ret;
     }
     
-    /* Try to read back */
-    msg.flags = I2C_M_RD;
-    msg.len = 1;
-    
-    ret = i2c_transfer(client->adapter, &msg, 1);
-    if (ret < 0) {
-        return ret;
+    if (ret == 2) {
+        dev_info(&client->dev, 
+                 "Chip ID at address 0x%02x: 0x%02x%02x%02x\n", 
+                 addr, chip_id[0], chip_id[1], chip_id[2]);
+        
+        /* Check if this matches expected OV01A1B ID */
+        if (chip_id[0] == 0x56 && chip_id[1] == 0x01 && chip_id[2] == 0x41) {
+            dev_info(&client->dev, "*** OV01A1B detected! ***\n");
+        }
     }
     
-    dev_info(&client->dev, "Response from address 0x%02x: 0x%02x\n", addr, buf[0]);
     return 0;
 }
 
@@ -268,3 +277,4 @@ module_i2c_driver(ov01a1b_power_test_driver);
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Your Name");
 MODULE_DESCRIPTION("OV01A1B power sequence test based on OV01A10");
+
