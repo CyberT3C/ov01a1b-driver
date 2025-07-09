@@ -71,9 +71,6 @@
             installPhase = ''
               mkdir -p $out/bin
               
-              # Copy analysis scripts
-              cp probe_sensor.sh $out/bin/probe-sensor
-              
               chmod +x $out/bin/*
             '';
           };
@@ -164,6 +161,10 @@
               echo ""
               echo "  Module search path:"
               ls -la "$KERNEL_DIR/scripts/" | head -5
+            }
+
+            run-build() {
+              nix build && sudo ./test_power.sh
             }
             
           '';

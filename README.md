@@ -36,6 +36,26 @@ If all my assumptions are true, there will be a ready to use driver in the futur
 
 Due to V4L2 Subsystem seems like rust ist no choice for my driver
 
+Power On/Off works, whats next?
+What is my aim?
+Defined Goal:
+
+Boot:
+  └── probe (power on → check ID → power off → register)
+
+Cam App startup:
+  └── open() → pm_runtime_get() → runtime_resume → power_on
+
+Stream start:
+  └── VIDIOC_STREAMON → s_stream(1) → sensor config
+
+Stream stop:
+  └── VIDIOC_STREAMOFF → s_stream(0)
+
+Cam App close:
+  └── close() → pm_runtime_put() → runtime_suspend → power_off
+
+
 at some point in the future ->
 # OV01A1B Linux Driver
 
