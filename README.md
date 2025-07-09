@@ -36,4 +36,14 @@ If all my assumptions are true, there will be a ready to use driver in the futur
 
 Due to V4L2 Subsystem seems like rust ist no choice for my driver
 
+at some point in the future ->
+# OV01A1B Linux Driver
 
+Linux V4L2 driver for OmniVision OV01A1B camera sensor.
+[STATUS] under construction!
+
+## License
+GPL-2.0 (see LICENSE file)
+
+## Credits
+Based on the ov01a10 driver by Intel Corporation.
