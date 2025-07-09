@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
+// Copyright (c) 2020-2022 Intel Corporation.
+// Copyright (c) 2025 Niklas Bartz
+//
+// OV01A1B camera driver
+// Based on ov01a10 driver by Intel Corporation
 // OV01A1B Power Test Module - Based on OV01A10 power sequence
 
 #include <linux/module.h>
