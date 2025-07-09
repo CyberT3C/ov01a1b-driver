@@ -135,12 +135,11 @@
             echo ""
             echo "📋 Available commands:"
             echo "  show-kernel-info  - Show detailed kernel information"
-            echo "  probe-sensor      - Probe I2C sensor"
+            echo "  bb                - Build an run test"
             echo ""
             echo "🏗️  Development workflow:"
             echo "  1. Edit your .c files"
-            echo "  2. 'bb' build and run without debug output
-            echo "   Run 'nix build' to package"
+            echo "   Run <nix build> to package"
             echo ""
             
             # Export environment variables

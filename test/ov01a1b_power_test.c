@@ -39,10 +39,14 @@ ov01a1b_probe()
     ├── v4l2_async_register_subdev()
     └── Power off (optional)
 */
-static const u8 address = 0x10;
 
 
 struct ov01a1b {
+    // struct v4l2_subdev sd;
+    //
+
+    // hardware
+    u8 address;
     struct i2c_client *client;
     struct clk *xvclk;
     struct gpio_desc *reset_gpio;
@@ -51,6 +55,31 @@ struct ov01a1b {
     u32 xvclk_freq;
 };
 
+static int write_register(struct ov01a1b *ov01a1b, u16 reg, u8 val)
+{
+    u8 buf[3] = { reg >> 8, reg & 0xff, val };
+    
+    return i2c_master_send(ov01a1b->client, buf, 3);
+}
+
+static int read_register(struct ov01a1b *ov01a1b, u16 reg, u8 *val)
+{
+    struct i2c_msg msgs[2];
+    u8 reg_buf[2] = { reg >> 8, reg & 0xff };
+    
+    msgs[0].addr = ov01a1b->address;
+    msgs[0].flags = 0;
+    msgs[0].len = 2;
+    msgs[0].buf = reg_buf;
+    
+    msgs[1].addr = ov01a1b->address;
+    msgs[1].flags = I2C_M_RD;
+    msgs[1].len = 1;
+    msgs[1].buf = val;
+    
+    return i2c_transfer(ov01a1b->client->adapter, msgs, 2);
+}
+
 
 
 static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
@@ -58,6 +87,7 @@ static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
     struct i2c_msg msg[2];
     u8 reg_addr[2];
     u8 chip_id[3];
+    u32 id_value;
     int ret;
     
     /* Read chip ID registers 0x300a, 0x300b, 0x300c */
@@ -71,27 +101,25 @@ static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
     
     msg[1].addr = addr;
     msg[1].flags = I2C_M_RD;
-    msg[1].len = 3;  /* Read 3 bytes at once */
+    msg[1].len = 3;             // Read 3 bytes at once
     msg[1].buf = chip_id;
     
     ret = i2c_transfer(client->adapter, msg, 2);
-    if (ret < 0) {
-        return ret;
+    if (ret != 2) {
+        return ret < 0 ? ret : -EIO;
     }
     
-    if (ret == 2) {
-        dev_info(&client->dev, 
-                 "Chip ID at address 0x%02x: 0x%02x%02x%02x\n", 
-                 addr, chip_id[0], chip_id[1], chip_id[2]);
-        
-        /* Check if this matches expected OV01A1B ID */
-        if (chip_id[0] == 0x56 && chip_id[1] == 0x01 && chip_id[2] == 0x41) {
-            dev_info(&client->dev, "*** OV01A1B detected! ***\n");
-        }
+    id_value = (chip_id[0] << 16) | (chip_id[1] << 8) | chip_id[2];
+    dev_info(&client->dev, "Chip ID at address 0x%02x: 0x%06x\n", addr, id_value);
+    
+    if (id_value == CHIP_ID) {
+        dev_info(&client->dev, "*** OV01A1B detected! ***\n");
+        return 1; // chip found
     }
     
     return 0;
 }
+
 
 static void ov01a1b_power_off(struct ov01a1b *power)
 {
@@ -188,9 +216,9 @@ static int ov01a1b_power_on_sequence(struct ov01a1b *power)
     
     /* Step 6: test address */
     dev_info(dev, "Probing I2C address...\n");
-    ret = ov01a1b_check_i2c_address(power->client, address);
+    ret = ov01a1b_check_i2c_address(power->client, power->address);
     if (ret == 0) {
-        dev_info(dev, "Found device at address 0x%02x!\n", address);
+        dev_info(dev, "Found device at address 0x%02x!\n", power->address);
     }
     
     return 0;
@@ -276,12 +304,19 @@ static int ov01a1b_power_test_probe(struct i2c_client *client)
     /* Execute power on sequence */
     ret = ov01a1b_power_on_sequence(power);
 
-
-    ret = ov01a1b_check_i2c_address(power->client, address);
+    power->address = 0x10;
+    ret = ov01a1b_check_i2c_address(power->client, power->address);
     if (ret == 0) {
-        dev_info(dev, "Device is working at address 0x%02x!\n", 
-                 address);
+        dev_info(dev, "Device is working at address 0x%02x!\n", power->address);
     }
+
+    u8 val = 0;
+    /* Test read from known registers */
+    read_register(power, 0x3001, &val);
+    dev_info(dev, "Reg 0x3001 = 0x%02x\n", val);
+    
+    read_register(power, 0x3002, &val);
+    dev_info(dev, "Reg 0x3002 = 0x%02x\n", val);
     
 
     /* Execute power off sequence */
@@ -289,7 +324,7 @@ static int ov01a1b_power_test_probe(struct i2c_client *client)
     msleep(10);
     /* Try to read chip ID - should fail */
 
-    ret = ov01a1b_check_i2c_address(power->client, address);
+    ret = ov01a1b_check_i2c_address(power->client, power->address);
     if (ret == 0) {
       dev_err(dev, "ERROR: Sensor still responding after power off!\n");
     } else {
