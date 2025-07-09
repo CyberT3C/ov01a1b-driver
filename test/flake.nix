@@ -140,7 +140,7 @@
             echo "🏗️  Development workflow:"
             echo "  1. Edit your .c files"
             echo "  2. Run <nix build> to package"
-            echo "  3. ./test_module.sh <name>
+            echo "  3. ./test_module.sh <name>"
             echo ""
             
             # Export environment variables
