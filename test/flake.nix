@@ -135,11 +135,12 @@
             echo ""
             echo "📋 Available commands:"
             echo "  show-kernel-info  - Show detailed kernel information"
-            echo "  bb                - Build an run test"
+            echo "  bb                - Build and run test of current modul"
             echo ""
             echo "🏗️  Development workflow:"
             echo "  1. Edit your .c files"
-            echo "   Run <nix build> to package"
+            echo "  2. Run <nix build> to package"
+            echo "  3. ./test_module.sh <name>
             echo ""
             
             # Export environment variables
@@ -162,7 +163,7 @@
             }
 
             bb() {
-              nix build && sudo ./test_power.sh
+              nix build && sudo ./test_power.sh ov01a1b_register_test
             }
             
           '';

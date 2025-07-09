@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
+MODULE=$1
 
 echo "OV01A1B Test Script"
 echo "=================="
-echo "Available modules:"
 
-echo "Loading OV01A1B test module..."
-./load.sh
+echo "Loading OV01A1B ${MODULE} module..."
+./load.sh $MODULE
 sleep 3 
 
 echo ""
@@ -19,4 +19,4 @@ sudo dmesg | grep -A 30 "OV01A1B Power Test Probe"
 
 echo ""
 echo "Unloading module..."
-./unload.sh
+./unload.sh $MODULE

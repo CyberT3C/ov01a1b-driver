@@ -80,6 +80,26 @@ static int read_register(struct ov01a1b *ov01a1b, u16 reg, u8 *val)
     return i2c_transfer(ov01a1b->client->adapter, msgs, 2);
 }
 
+// Test basic sensor registers
+static int test_sensor_registers(struct ov01a1b *sensor)
+{
+    u8 val;
+    
+    // Try reading various registers to understand the sensor state
+    read_register(sensor, 0x0100, &val);  // Mode select (stream on/off)
+    dev_info(dev, "Mode select (0x0100) = 0x%02x\n", val);
+    
+    read_register(sensor, 0x0103, &val);  // Software reset
+    dev_info(dev, "Software reset (0x0103) = 0x%02x\n", val);
+    
+    /* Test read from known registers */
+    read_register(sensor, 0x3001, &val);
+    dev_info(dev, "Reg 0x3001 = 0x%02x\n", val);
+    
+    read_register(sensor, 0x3002, &val);
+    dev_info(dev, "Reg 0x3002 = 0x%02x\n", val);
+}
+
 
 
 static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
@@ -310,14 +330,8 @@ static int ov01a1b_power_test_probe(struct i2c_client *client)
         dev_info(dev, "Device is working at address 0x%02x!\n", power->address);
     }
 
-    u8 val = 0;
-    /* Test read from known registers */
-    read_register(power, 0x3001, &val);
-    dev_info(dev, "Reg 0x3001 = 0x%02x\n", val);
-    
-    read_register(power, 0x3002, &val);
-    dev_info(dev, "Reg 0x3002 = 0x%02x\n", val);
-    
+
+    test_sensor_registers(power);
 
     /* Execute power off sequence */
     ov01a1b_power_off(power);
