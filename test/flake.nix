@@ -70,8 +70,6 @@
             
             installPhase = ''
               mkdir -p $out/bin
-              
-              chmod +x $out/bin/*
             '';
           };
         };
@@ -141,7 +139,8 @@
             echo ""
             echo "🏗️  Development workflow:"
             echo "  1. Edit your .c files"
-            echo "  3. Run 'nix build' to package"
+            echo "  2. 'bb' build and run without debug output
+            echo "   Run 'nix build' to package"
             echo ""
             
             # Export environment variables
@@ -163,7 +162,7 @@
               ls -la "$KERNEL_DIR/scripts/" | head -5
             }
 
-            run-build() {
+            bb() {
               nix build && sudo ./test_power.sh
             }
             
