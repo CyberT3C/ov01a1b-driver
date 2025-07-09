@@ -87,13 +87,8 @@ static void test_sensor_registers(struct ov01a1b *sensor)
 
     struct device *dev = &sensor->client->dev;
 
-    // Try reading various registers to understand the sensor state
-    read_register(sensor, 0x0100, &val);  // Mode select (stream on/off)
-    dev_info(dev, "Mode select (0x0100) = 0x%02x\n", val);
-    
-    read_register(sensor, 0x0103, &val);  // Software reset
-    dev_info(dev, "Software reset (0x0103) = 0x%02x\n", val);
-    
+    dev_info(dev, "\n=== Basic Register Test ===\n");
+   
 
     // I know
     read_register(sensor, 0x3001, &val);
@@ -101,9 +96,290 @@ static void test_sensor_registers(struct ov01a1b *sensor)
     
     read_register(sensor, 0x3002, &val);
     dev_info(dev, "Reg 0x3002 = 0x%02x\n", val);
+
+
+    // Check for monochrome/RAW format
+    read_register(sensor, 0x4300, &val);  // Format control
+    dev_info(dev, "Format control (0x4300) = 0x%02x\n", val);
+    
+    // Check MIPI lanes configuration
+    read_register(sensor, 0x4800, &val);
+    dev_info(dev, "MIPI control (0x4800) = 0x%02x\n", val);
+    // 0x04 might mean 1-lane MIPI (common for low-res sensors)
+    
+    // Check for IR-specific features
+    read_register(sensor, 0x5000, &val);
+    dev_info(dev, "ISP control (0x5000) = 0x%02x\n", val);
+    // 0x75 from your dump might have IR-specific bits
 }
 
+static void test_sensor_registers_extended(struct ov01a1b *sensor)
+{
+    u8 val;
+    struct device *dev = &sensor->client->dev;
+    
+    dev_info(dev, "\n=== Extended Register Test ===\n");
+    
+    // Chip ID registers (already working)
+    read_register(sensor, 0x300a, &val);
+    dev_info(dev, "Chip ID High (0x300a) = 0x%02x\n", val);
+    read_register(sensor, 0x300b, &val);
+    dev_info(dev, "Chip ID Mid (0x300b) = 0x%02x\n", val);
+    read_register(sensor, 0x300c, &val);
+    dev_info(dev, "Chip ID Low (0x300c) = 0x%02x\n", val);
+    
+    // System control registers
+    read_register(sensor, 0x0100, &val);  // Mode select
+    dev_info(dev, "Mode select (0x0100) = 0x%02x\n", val);
+    read_register(sensor, 0x0103, &val);  // Software reset
+    dev_info(dev, "Software reset (0x0103) = 0x%02x\n", val);
+    
+    // PLL registers (important for clock config)
+    read_register(sensor, 0x0300, &val);
+    dev_info(dev, "PLL1 ctrl (0x0300) = 0x%02x\n", val);
+    read_register(sensor, 0x0301, &val);
+    dev_info(dev, "PLL1 ctrl (0x0301) = 0x%02x\n", val);
+    read_register(sensor, 0x0302, &val);
+    dev_info(dev, "PLL1 ctrl (0x0302) = 0x%02x\n", val);
+    read_register(sensor, 0x0303, &val);
+    dev_info(dev, "PLL1 ctrl (0x0303) = 0x%02x\n", val);
+    
+    // Timing registers
+    read_register(sensor, 0x3800, &val);
+    dev_info(dev, "H_START high (0x3800) = 0x%02x\n", val);
+    read_register(sensor, 0x3801, &val);
+    dev_info(dev, "H_START low (0x3801) = 0x%02x\n", val);
+    read_register(sensor, 0x3802, &val);
+    dev_info(dev, "V_START high (0x3802) = 0x%02x\n", val);
+    read_register(sensor, 0x3803, &val);
+    dev_info(dev, "V_START low (0x3803) = 0x%02x\n", val);
+    
+    // Output size
+    read_register(sensor, 0x3808, &val);
+    dev_info(dev, "H_OUTPUT_SIZE high (0x3808) = 0x%02x\n", val);
+    read_register(sensor, 0x3809, &val);
+    dev_info(dev, "H_OUTPUT_SIZE low (0x3809) = 0x%02x\n", val);
+    read_register(sensor, 0x380a, &val);
+    dev_info(dev, "V_OUTPUT_SIZE high (0x380a) = 0x%02x\n", val);
+    read_register(sensor, 0x380b, &val);
+    dev_info(dev, "V_OUTPUT_SIZE low (0x380b) = 0x%02x\n", val);
+    
+    // Total size (for FPS calculation)
+    read_register(sensor, 0x380c, &val);
+    dev_info(dev, "HTS high (0x380c) = 0x%02x\n", val);
+    read_register(sensor, 0x380d, &val);
+    dev_info(dev, "HTS low (0x380d) = 0x%02x\n", val);
+    read_register(sensor, 0x380e, &val);
+    dev_info(dev, "VTS high (0x380e) = 0x%02x\n", val);
+    read_register(sensor, 0x380f, &val);
+    dev_info(dev, "VTS low (0x380f) = 0x%02x\n", val);
+    
+    // Exposure control
+    read_register(sensor, 0x3500, &val);
+    dev_info(dev, "Exposure[19:16] (0x3500) = 0x%02x\n", val);
+    read_register(sensor, 0x3501, &val);
+    dev_info(dev, "Exposure[15:8] (0x3501) = 0x%02x\n", val);
+    read_register(sensor, 0x3502, &val);
+    dev_info(dev, "Exposure[7:0] (0x3502) = 0x%02x\n", val);
+    
+    // Gain control
+    read_register(sensor, 0x3508, &val);
+    dev_info(dev, "Gain high (0x3508) = 0x%02x\n", val);
+    read_register(sensor, 0x3509, &val);
+    dev_info(dev, "Gain low (0x3509) = 0x%02x\n", val);
+    
+    // MIPI control
+    read_register(sensor, 0x4800, &val);
+    dev_info(dev, "MIPI ctrl (0x4800) = 0x%02x\n", val);
+    read_register(sensor, 0x4801, &val);
+    dev_info(dev, "MIPI ctrl (0x4801) = 0x%02x\n", val);
+    
+    // Test pattern
+    read_register(sensor, 0x5080, &val);
+    dev_info(dev, "Test pattern (0x5080) = 0x%02x\n", val);
+    
+    dev_info(dev, "=== End Extended Register Test ===\n");
+}
 
+// Helper function to dump a register range
+static void dump_register_range(struct ov01a1b *sensor, u16 start, u16 end)
+{
+    struct device *dev = &sensor->client->dev;
+    u8 val;
+    int i;
+    
+    dev_info(dev, "\nDumping registers 0x%04x - 0x%04x:\n", start, end);
+    for (i = start; i <= end; i++) {
+        if (read_register(sensor, i, &val) == 2) {
+            dev_info(dev, "  0x%04x = 0x%02x\n", i, val);
+        }
+    }
+}
+
+// Try to find undocumented features
+static void probe_sensor_capabilities(struct ov01a1b *sensor)
+{
+    struct device *dev = &sensor->client->dev;
+    u8 val;
+    
+    dev_info(dev, "\n=== Probing Sensor Capabilities ===\n");
+    
+    // Check for common OmniVision register ranges
+    dump_register_range(sensor, 0x3000, 0x3010);  // System control
+    dump_register_range(sensor, 0x3800, 0x3810);  // Timing
+    dump_register_range(sensor, 0x5000, 0x5010);  // ISP control
+    
+    // Try to identify supported modes by checking certain registers
+    dev_info(dev, "\nChecking for mode-specific registers...\n");
+    
+    // Some sensors have mode registers at 0x3820-0x3821
+    read_register(sensor, 0x3820, &val);
+    dev_info(dev, "Format1 (0x3820) = 0x%02x (bit 1: vflip, bit 2: hflip)\n", val);
+    read_register(sensor, 0x3821, &val);
+    dev_info(dev, "Format2 (0x3821) = 0x%02x\n", val);
+}
+
+static void search_for_ir_modes(struct ov01a1b *sensor)
+{
+    struct device *dev = &sensor->client->dev;
+    u8 val;
+    
+    dev_info(dev, "\n=== Searching for IR/Face Recognition Modes ===\n");
+    
+    // Check binning/skipping registers
+    read_register(sensor, 0x3814, &val);
+    dev_info(dev, "H_INC (0x3814) = 0x%02x (horizontal subsampling)\n", val);
+    read_register(sensor, 0x3815, &val);
+    dev_info(dev, "V_INC (0x3815) = 0x%02x (vertical subsampling)\n", val);
+    
+    // Check for binning configuration
+    read_register(sensor, 0x3820, &val);
+    dev_info(dev, "Format1 (0x3820) = 0x%02x\n", val);
+    dev_info(dev, "  - Bit 0: Binning H = %d\n", val & 0x01);
+    dev_info(dev, "  - Bit 1: Binning V = %d\n", (val >> 1) & 0x01);
+    dev_info(dev, "  - Bit 7-6: Special mode = %d\n", (val >> 6) & 0x03);
+    
+    // Check ISP window size (might show actual output)
+    read_register(sensor, 0x5680, &val);
+    dev_info(dev, "ISP H_SIZE high (0x5680) = 0x%02x\n", val);
+    read_register(sensor, 0x5681, &val);
+    dev_info(dev, "ISP H_SIZE low (0x5681) = 0x%02x\n", val);
+    read_register(sensor, 0x5682, &val);
+    dev_info(dev, "ISP V_SIZE high (0x5682) = 0x%02x\n", val);
+    read_register(sensor, 0x5683, &val);
+    dev_info(dev, "ISP V_SIZE low (0x5683) = 0x%02x\n", val);
+    
+    // Check for IR-specific registers
+    dev_info(dev, "\nChecking IR-specific features:\n");
+    
+    // Common IR control registers in OmniVision sensors
+    read_register(sensor, 0x5300, &val);
+    dev_info(dev, "IR control (0x5300) = 0x%02x\n", val);
+    read_register(sensor, 0x5301, &val);
+    dev_info(dev, "IR control (0x5301) = 0x%02x\n", val);
+    
+    // Check if there's a mode select register
+    read_register(sensor, 0x3708, &val);
+    dev_info(dev, "Mode control? (0x3708) = 0x%02x\n", val);
+}
+
+// Test different resolutions by writing registers
+static int test_resolution_mode(struct ov01a1b *sensor, u16 width, u16 height)
+{
+    struct device *dev = &sensor->client->dev;
+    u8 val;
+    int ret;
+    
+    dev_info(dev, "\n=== Testing %dx%d mode ===\n", width, height);
+    
+    // Try to set output size
+    ret = write_register(sensor, 0x3808, (width >> 8) & 0xff);
+    ret |= write_register(sensor, 0x3809, width & 0xff);
+    ret |= write_register(sensor, 0x380a, (height >> 8) & 0xff);
+    ret |= write_register(sensor, 0x380b, height & 0xff);
+    
+    if (ret < 0) {
+        dev_err(dev, "Failed to write resolution registers\n");
+        return ret;
+    }
+    
+    // Read back to verify
+    msleep(10);
+    read_register(sensor, 0x3808, &val);
+    dev_info(dev, "H_OUTPUT_SIZE high readback = 0x%02x\n", val);
+    read_register(sensor, 0x3809, &val);
+    dev_info(dev, "H_OUTPUT_SIZE low readback = 0x%02x\n", val);
+    read_register(sensor, 0x380a, &val);
+    dev_info(dev, "V_OUTPUT_SIZE high readback = 0x%02x\n", val);
+    read_register(sensor, 0x380b, &val);
+    dev_info(dev, "V_OUTPUT_SIZE low readback = 0x%02x\n", val);
+    
+    return 0;
+}
+
+// Calculate and display timing information
+static void analyze_timing(struct ov01a1b *sensor)
+{
+    struct device *dev = &sensor->client->dev;
+    u8 val_h, val_l;
+    u16 hts, vts, h_output, v_output;
+    u32 pixel_rate, fps;
+    
+    dev_info(dev, "\n=== Timing Analysis ===\n");
+    
+    // Read current values
+    read_register(sensor, 0x380c, &val_h);
+    read_register(sensor, 0x380d, &val_l);
+    hts = (val_h << 8) | val_l;
+    
+    read_register(sensor, 0x380e, &val_h);
+    read_register(sensor, 0x380f, &val_l);
+    vts = (val_h << 8) | val_l;
+    
+    read_register(sensor, 0x3808, &val_h);
+    read_register(sensor, 0x3809, &val_l);
+    h_output = (val_h << 8) | val_l;
+    
+    read_register(sensor, 0x380a, &val_h);
+    read_register(sensor, 0x380b, &val_l);
+    v_output = (val_h << 8) | val_l;
+    
+    dev_info(dev, "HTS (Horizontal Total Size): %d\n", hts);
+    dev_info(dev, "VTS (Vertical Total Size): %d\n", vts);
+    dev_info(dev, "Output resolution: %dx%d\n", h_output, v_output);
+    
+    // Assuming 19.2MHz clock (from your power sequence)
+    // This is simplified - actual calculation depends on PLL settings
+    pixel_rate = 19200000; // This would need PLL calculation
+    fps = pixel_rate / (hts * vts);
+    
+    dev_info(dev, "Estimated FPS (assuming direct clock): %d\n", fps);
+}
+
+// Try to find supported sensor modes
+static void probe_sensor_modes(struct ov01a1b *sensor)
+{
+    struct device *dev = &sensor->client->dev;
+    
+    dev_info(dev, "\n=== Probing Common IR Sensor Modes ===\n");
+    
+    // First analyze current timing
+    analyze_timing(sensor);
+    
+    // Search for IR-specific configurations
+    search_for_ir_modes(sensor);
+    
+    // Test writing different resolutions
+    // Note: We'll do a soft reset after to restore defaults
+    test_resolution_mode(sensor, 400, 400);  // Expected IR mode
+    test_resolution_mode(sensor, 640, 480);  // Common VGA
+    test_resolution_mode(sensor, 320, 240);  // QVGA
+    
+    // Soft reset to restore defaults
+    dev_info(dev, "\nPerforming soft reset to restore defaults...\n");
+    write_register(sensor, 0x0103, 0x01);
+    msleep(10);
+}
 
 static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
 {
@@ -332,9 +608,13 @@ static int ov01a1b_power_test_probe(struct i2c_client *client)
     if (ret == 0) {
         dev_info(dev, "Device is working at address 0x%02x!\n", power->address);
     }
-
-
+  
+    // test and get informations
     test_sensor_registers(power);
+    test_sensor_registers_extended(power);
+    probe_sensor_capabilities(power);
+    search_for_ir_modes(power);
+    probe_sensor_modes(power);
 
     /* Execute power off sequence */
     ov01a1b_power_off(power);
