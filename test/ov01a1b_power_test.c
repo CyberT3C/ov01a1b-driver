@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: GPL-2.0
+// OV01A1B Power Test Module - Based on OV01A10 power sequence
+
+#include <linux/module.h>
+#include <linux/i2c.h>
+#include <linux/acpi.h>
+#include <linux/delay.h>
+#include <linux/regulator/consumer.h>
+#include <linux/gpio/consumer.h>
+#include <linux/clk.h>
+
+#define DRIVER_NAME "ov01a1b_power_test"
+
+/* Common OmniVision I2C addresses to try */
+static const u8 possible_addresses[] = {
+    0x36, /* OV01A10 uses this */
+    0x3c,
+    0x10,
+    0x20,
+    0x30,
+    0x42,
+    0x24,
+    0x6c,
+};
+
+struct ov01a1b_power {
+    struct i2c_client *client;
+    struct clk *xvclk;
+    struct gpio_desc *reset_gpio;
+    struct gpio_desc *powerdown_gpio;
+    struct regulator_bulk_data supplies[3];
+    u32 xvclk_freq;
+};
+
+static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
+{
+    struct i2c_msg msg;
+    u8 buf[2];
+    int ret;
+    
+    /* Try to read chip ID register at 0x300a */
+    buf[0] = 0x30;
+    buf[1] = 0x0a;
+    
+    msg.addr = addr;
+    msg.flags = 0;
+    msg.len = 2;
+    msg.buf = buf;
+    
+    ret = i2c_transfer(client->adapter, &msg, 1);
+    if (ret < 0) {
+        return ret;
+    }
+    
+    /* Try to read back */
+    msg.flags = I2C_M_RD;
+    msg.len = 1;
+    
+    ret = i2c_transfer(client->adapter, &msg, 1);
+    if (ret < 0) {
+        return ret;
+    }
+    
+    dev_info(&client->dev, "Response from address 0x%02x: 0x%02x\n", addr, buf[0]);
+    return 0;
+}
+
+static int ov01a1b_power_on_sequence(struct ov01a1b_power *power)
+{
+    struct device *dev = &power->client->dev;
+    int ret;
+    int i;
+    
+    dev_info(dev, "Starting OV01A10-style power sequence...\n");
+    
+    /* Step 1: Enable regulators (if available) */
+    if (power->supplies[0].consumer) {
+        dev_info(dev, "Enabling regulators...\n");
+        ret = regulator_bulk_enable(ARRAY_SIZE(power->supplies), 
+                                    power->supplies);
+        if (ret < 0) {
+            dev_err(dev, "Failed to enable regulators: %d\n", ret);
+            /* Continue anyway, might not be required */
+        } else {
+            /* Wait for voltages to stabilize */
+            usleep_range(1000, 1500);
+        }
+    }
+    
+    /* Step 2: Enable clock (if available) */
+    if (power->xvclk) {
+        dev_info(dev, "Enabling XVCLK at %u Hz...\n", power->xvclk_freq);
+        
+        ret = clk_set_rate(power->xvclk, power->xvclk_freq);
+        if (ret < 0) {
+            dev_warn(dev, "Failed to set xvclk rate: %d\n", ret);
+        }
+        
+        ret = clk_prepare_enable(power->xvclk);
+        if (ret < 0) {
+            dev_err(dev, "Failed to enable xvclk: %d\n", ret);
+            /* Continue anyway */
+        } else {
+            /* Wait for clock to stabilize */
+            usleep_range(1000, 1500);
+        }
+    } else {
+        dev_warn(dev, "No clock found - sensor might need external clock!\n");
+    }
+    
+    /* Step 3: Release powerdown (if available) */
+    if (power->powerdown_gpio) {
+        dev_info(dev, "Releasing powerdown...\n");
+        gpiod_set_value_cansleep(power->powerdown_gpio, 0);
+        usleep_range(1000, 1500);
+    }
+    
+    /* Step 4: Toggle reset (if available) */
+    if (power->reset_gpio) {
+        dev_info(dev, "Toggling reset...\n");
+        /* Assert reset */
+        gpiod_set_value_cansleep(power->reset_gpio, 1);
+        usleep_range(1000, 1500);
+        /* Deassert reset */
+        gpiod_set_value_cansleep(power->reset_gpio, 0);
+        /* Wait for sensor to boot - this is critical! */
+        msleep(20);
+    }
+    
+    /* Step 5: Additional delay for sensor initialization */
+    dev_info(dev, "Waiting for sensor initialization...\n");
+    msleep(10);
+    
+    /* Step 6: Try to detect sensor on various addresses */
+    dev_info(dev, "Probing I2C addresses...\n");
+    for (i = 0; i < ARRAY_SIZE(possible_addresses); i++) {
+        ret = ov01a1b_check_i2c_address(power->client, possible_addresses[i]);
+        if (ret == 0) {
+            dev_info(dev, "Found device at address 0x%02x!\n", 
+                     possible_addresses[i]);
+        }
+    }
+    
+    return 0;
+}
+
+static int ov01a1b_power_test_probe(struct i2c_client *client)
+{
+    struct device *dev = &client->dev;
+    struct ov01a1b_power *power;
+    int ret;
+    
+    dev_info(dev, "=== OV01A1B Power Test Probe ===\n");
+    dev_info(dev, "Client address: 0x%02x\n", client->addr);
+    dev_info(dev, "Adapter: %s\n", client->adapter->name);
+    
+    power = devm_kzalloc(dev, sizeof(*power), GFP_KERNEL);
+    if (!power)
+        return -ENOMEM;
+    
+    power->client = client;
+    
+    /* Try to get clock - based on OV01A10 */
+    power->xvclk = devm_clk_get(dev, "xvclk");
+    if (IS_ERR(power->xvclk)) {
+        dev_info(dev, "No xvclk found, trying default names...\n");
+        power->xvclk = devm_clk_get(dev, NULL);
+        if (IS_ERR(power->xvclk)) {
+            power->xvclk = NULL;
+            dev_warn(dev, "No clock found - continuing without\n");
+        }
+    }
+    
+    /* Default to 19.2 MHz like OV01A10 */
+    power->xvclk_freq = 19200000;
+    
+    /* Try to get regulators - based on OV01A10 */
+    power->supplies[0].supply = "avdd";
+    power->supplies[1].supply = "dovdd";
+    power->supplies[2].supply = "dvdd";
+    
+    ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(power->supplies),
+                                  power->supplies);
+    if (ret < 0) {
+        dev_info(dev, "Cannot get regulators, trying alternatives...\n");
+        
+        /* Try alternative names */
+        power->supplies[0].supply = "vana";
+        power->supplies[1].supply = "vio";
+        power->supplies[2].supply = "vdig";
+        
+        ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(power->supplies),
+                                      power->supplies);
+        if (ret < 0) {
+            dev_warn(dev, "No regulators found - continuing without\n");
+            power->supplies[0].consumer = NULL;
+        }
+    }
+    
+    /* Try to get GPIOs */
+    power->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+    if (IS_ERR(power->reset_gpio)) {
+        power->reset_gpio = NULL;
+        dev_warn(dev, "No reset GPIO found\n");
+    }
+    
+    power->powerdown_gpio = devm_gpiod_get_optional(dev, "powerdown", 
+                                                     GPIOD_OUT_HIGH);
+    if (IS_ERR(power->powerdown_gpio)) {
+        power->powerdown_gpio = NULL;
+        dev_warn(dev, "No powerdown GPIO found\n");
+    }
+    
+    /* Try alternative GPIO names */
+    if (!power->reset_gpio) {
+        power->reset_gpio = devm_gpiod_get_optional(dev, "xshutdown", 
+                                                     GPIOD_OUT_HIGH);
+    }
+    if (!power->powerdown_gpio) {
+        power->powerdown_gpio = devm_gpiod_get_optional(dev, "pwdn", 
+                                                         GPIOD_OUT_HIGH);
+    }
+    
+    /* Execute power on sequence */
+    ret = ov01a1b_power_on_sequence(power);
+    
+    /* Also try direct I2C scan */
+    dev_info(dev, "\nDirect I2C scan on bus %d:\n", client->adapter->nr);
+    /* This would need i2c-dev loaded and proper implementation */
+    
+    dev_info(dev, "\n=== Test Complete ===\n");
+    dev_info(dev, "Check dmesg and try: sudo i2cdetect -y -r %d\n", 
+             client->adapter->nr);
+    
+    /* Always return error to avoid binding */
+    return -ENODEV;
+}
+
+static void ov01a1b_power_test_remove(struct i2c_client *client)
+{
+    dev_info(&client->dev, "OV01A1B power test remove\n");
+}
+
+static const struct acpi_device_id ov01a1b_acpi_ids[] = {
+    { "OVTI01AB", 0 },
+    { }
+};
+MODULE_DEVICE_TABLE(acpi, ov01a1b_acpi_ids);
+
+static const struct i2c_device_id ov01a1b_id[] = {
+    { "ov01a1b", 0 },
+    { }
+};
+MODULE_DEVICE_TABLE(i2c, ov01a1b_id);
+
+static struct i2c_driver ov01a1b_power_test_driver = {
+    .driver = {
+        .name = DRIVER_NAME,
+        .acpi_match_table = ov01a1b_acpi_ids,
+    },
+    .probe = ov01a1b_power_test_probe,
+    .remove = ov01a1b_power_test_remove,
+    .id_table = ov01a1b_id,
+};
+
+module_i2c_driver(ov01a1b_power_test_driver);
+
+MODULE_LICENSE("GPL v2");
+MODULE_AUTHOR("Your Name");
+MODULE_DESCRIPTION("OV01A1B power sequence test based on OV01A10");

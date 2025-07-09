@@ -1,0 +1,27 @@
+# Kernel build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+modules.order
+Module.symvers
+.*.cmd
+.tmp_versions/
+
+# Build directories
+build/
+result-dev/
+.build.*/
+debug
+debug-*
+
+# Nix
+result
+result-*
+
+# Editor
+*.swp
+*~
+.vscode/
+.idea/
