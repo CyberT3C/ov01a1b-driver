@@ -420,51 +420,56 @@ static int ov01a1b_write_register_list(struct ov01a1b *ov01a1b,
 
 static int ov01a1b_read_register(struct ov01a1b *ov01a1b, u16 reg, u16 len, u32 *val)
 {
+	if (len > 4)
+	    return -EINVAL;
+
 	struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
 	struct i2c_msg msgs[2];
-	u8 addr_buf[2];
-	u8 data_buf[4] = {0};
+	u8 addr_buffer[2];
+	u8 data_buffer[4] = {};
 	int ret = 0;
 
-	if (len > sizeof(data_buf))
-		return -EINVAL;
 
-	put_unaligned_be16(reg, addr_buf);
+	put_unaligned_be16(reg, addr_buffer);
 	msgs[0].addr = client->addr;
 	msgs[0].flags = 0;
-	msgs[0].len = sizeof(addr_buf);
-	msgs[0].buf = addr_buf;
+	msgs[0].len = sizeof(addr_buffer);
+	msgs[0].buf = addr_buffer;
 	msgs[1].addr = client->addr; 
 	msgs[1].flags = I2C_M_RD;
 	msgs[1].len = len;
-	msgs[1].buf = &data_buf[sizeof(data_buf) - len];
+	// msgs[1].buf = &data_buf;
+	msgs[1].buf = &data_buffer[4 - len];
+        //msgs[1].buf = data_buffer;
+        
 
 	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
 	if (ret != ARRAY_SIZE(msgs))
 		return ret < 0 ? ret : -EIO;
 
-	*val = get_unaligned_be32(data_buf);
-
-	return 0;
-}
-
-
-
+        
+        dev_info(&client->dev, "debug output before get unaligned be32");
+	*val = get_unaligned_be32(data_buffer);
+        
+       // switch(len) {
+       // case 1: *val = data_buffer[0]; break;
+       // case 2: *val = get_unaligned_be16(data_buffer); break;
+       // case 3: *val = (data_buffer[0] << 16) | (data_buffer[1] << 8) | data_buffer[2]; break;
+       // case 4: *val = get_unaligned_be32(data_buffer); break;
+       // }    
+    
+    
+    	return 0;
+    }
+    
+    
+    
 static int read_chip_id(struct ov01a1b *ov01a1b, u32 *val)
 {
     struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
     struct device *dev = &client->dev;
-    int ret;
-    u32 chip_id;
     
-    dev_info(&client->dev, "read chip id now");
-    ret = ov01a1b_read_register(ov01a1b, REG_CHIP_ID, 3, &chip_id);
-    if (ret) {
-        dev_err(dev, "Faield to read chip id for ov01a1v: %d", ret);
-        return ret;
-    }
-
-    return 0;
+    return ov01a1b_read_register(ov01a1b, REG_CHIP_ID, 3, val);
 }
 
 static int ov01a1b_check_i2c_address(struct ov01a1b *ov01a1b)
@@ -476,16 +481,13 @@ static int ov01a1b_check_i2c_address(struct ov01a1b *ov01a1b)
 
     ret = read_chip_id(ov01a1b, &id_value);
     if(ret){
-        dev_err(dev, "failed to read chip id");
         return ret;
     }
-        
 
     if (id_value == CHIP_ID) {
     	dev_info(dev, "OV01A1B IR camera detected (chip id: 0x%06x)\n", id_value);
         return 0; 
     }
-
     
     return -EIO;
 }
@@ -881,16 +883,16 @@ static int ov01a1b_probe(struct i2c_client *client)
 #if IS_ENABLED(CONFIG_INTEL_SKL_INT3472)
 
     dev_info(dev, "\n=== OV01A1B Power Test Probe ===\n");
-    dev_info(dev, "Client address: 0x%02x\n", REG_CHIP_ID);
+    dev_info(dev, "Chip ID: 0x%02x\n", REG_CHIP_ID);
     dev_info(dev, "Adapter: %s\n", client->adapter->name);
+    dev_info(dev, "Client address: 0x%02x\n", client->addr);
+
 #else
 #error "CONFIG_INTEL_SKL_INT3472 must be enabled."
 #endif
 #else
 #error "KERNEL_VERSION must greater than 6.15.3 ."
 #endif
-
-    
 
     ov01a1b = devm_kzalloc(&client->dev, sizeof(*ov01a1b), GFP_KERNEL);
     if (!ov01a1b)
@@ -965,7 +967,7 @@ static int ov01a1b_probe(struct i2c_client *client)
         goto probe_error_ret;
     }
   
-//    mutex_init(&ov01a1b->mutex);
+    mutex_init(&ov01a1b->mutex);
 //    ov01a1b->cur_mode = &supported_modes[0];
 //    ret = ov01a1b_init_controls(ov01a1b);
 //    if (ret) {
@@ -1005,6 +1007,21 @@ probe_error_ret:
 static void ov01a1b_remove(struct i2c_client *client)
 {
     dev_info(&client->dev, "OV01A1B power test remove\n");
+
+    struct v4l2_subdev *sd = i2c_get_clientdata(client);
+    struct device *dev = &client->dev;
+    struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+    
+    pm_runtime_get_sync(dev);
+    pm_runtime_disable(dev);
+    pm_runtime_put_noidle(dev);
+    ov01a1b_suspend(dev);
+    
+    v4l2_async_unregister_subdev(sd);
+    media_entity_cleanup(&sd->entity);
+    v4l2_ctrl_handler_free(sd->ctrl_handler);
+    mutex_destroy(&ov01a1b->mutex);
+
 }
 
 static const struct acpi_device_id ov01a1b_acpi_ids[] = {
