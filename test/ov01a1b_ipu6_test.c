@@ -5,22 +5,47 @@
 // OV01A1B camera driver
 // Based on ov01a10 driver by Intel Corporation
 // OV01A1B Power Test Module - Based on OV01A10 power sequence
+//
 
+
+
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/acpi.h>
 #include <linux/delay.h>
+#include <linux/pm_runtime.h>
+
 #include <linux/regulator/consumer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/clk.h>
+#include <linux/unaligned.h>
 
-#define DRIVER_NAME "ov01a1b_power_test"
-#define CHIP_ID 0x560141
+#include <media/v4l2-ctrls.h>
+#include <media/v4l2-device.h>   
 
-#if NOT IS_ENABLED(CONFIG_INTEL_SKL_INT3472)
-# only target platform
-#error "CONFIG_INTEL_SKL_INT3472 must be enabled."
-#endif
+
+#define DRIVER_NAME "ov01a1b"
+
+#define CHIP_ID         0x560141
+#define REG_CHIP_ID     0x10
+
+#define OV01A1B_LINK_FREQ_400MHZ	400000000ULL
+#define OV01A1B_SCLK			40000000LL
+//#define OV01A1B_MCLK			19200000
+//#define OV01A1B_DATA_LANES		1
+//#define OV01A1B_IR_DEPTH		10
+
+#define OV01A1B_REG_MODE_SELECT         0x0100
+#define OV01A1B_MODE_STANDBY            0x00
+#define OV01A1B_MODE_STREAMING          0x01
+
+/* vertical-timings from sensor */
+#define OV01A1B_REG_VTS			0x380e
+#define OV01A1B_VTS_DEF_640		0x0200
+#define OV01A1B_VTS_MIN			0x0200
+#define OV01A1B_VTS_MAX			0xffff
+
 
 /* Common OmniVision I2C addresses to try */
 
@@ -45,14 +70,264 @@ ov01a1b_probe()
     └── Power off (optional)
 */
 
+struct ov01a1b_reg {
+	u16 address;
+	u8 val;
+};
+
+struct ov01a1b_reg_list {
+	u32 num_of_regs;
+	const struct ov01a1b_reg *regs;
+};
+
+struct ov01a1b_link_freq_config {
+	const struct ov01a1b_reg_list reg_list;
+};
+
+
+struct ov01a1b_mode {
+	/* Frame width in pixels */
+	u32 width;
+
+	/* Frame height in pixels */
+	u32 height;
+
+	/* Horizontal timining size */
+	u32 hts;
+
+	/* Default vertical timining size */
+	u32 vts_def;
+
+	/* Min vertical timining size */
+	u32 vts_min;
+
+	/* Link frequency needed for this resolution */
+	u32 link_freq_index;
+
+	/* Sensor register settings for this resolution */
+	const struct ov01a1b_reg_list reg_list;
+};
+
+
+static const struct ov01a1b_reg sensor_ir_init[] = {
+	{0x0103, 0x01},
+	{0x0302, 0x00},
+	{0x0303, 0x06},
+	{0x0304, 0x01},
+	{0x0305, 0x90},
+	{0x0306, 0x00},
+	{0x0308, 0x01},
+	{0x0309, 0x00},
+	{0x030c, 0x01},
+	{0x0322, 0x01},
+	{0x0323, 0x06},
+	{0x0324, 0x01},
+	{0x0325, 0x68},
+	{0x3002, 0xa1},
+	{0x301e, 0xf0},
+	{0x3022, 0x01},
+	{0x3501, 0x03},
+	{0x3502, 0x78},
+	{0x3504, 0x0c},
+	{0x3508, 0x01},
+	{0x3509, 0x00},
+	{0x3601, 0xc0},
+	{0x3603, 0x71},
+	{0x3610, 0x68},
+	{0x3611, 0x86},
+	{0x3640, 0x10},
+	{0x3641, 0x80},
+	{0x3642, 0xdc},
+	{0x3646, 0x55},
+	{0x3647, 0x57},
+	{0x364b, 0x00},
+	{0x3653, 0x10},
+	{0x3655, 0x00},
+	{0x3656, 0x00},
+	{0x365f, 0x0f},
+	{0x3661, 0x45},
+	{0x3662, 0x24},
+	{0x3663, 0x11},
+	{0x3664, 0x07},
+	{0x3709, 0x34},
+	{0x370b, 0x6f},
+	{0x3714, 0x22},
+	{0x371b, 0x27},
+	{0x371c, 0x67},
+	{0x371d, 0xa7},
+	{0x371e, 0xe7},
+	{0x3730, 0x81},
+	{0x3733, 0x10},
+	{0x3734, 0x40},
+	{0x3737, 0x04},
+	{0x3739, 0x1c},
+	{0x3767, 0x00},
+	{0x376c, 0x81},
+	{0x3772, 0x14},
+	{0x37c2, 0x04},
+	{0x37d8, 0x03},
+	{0x37d9, 0x0c},
+	{0x37e0, 0x00},
+	{0x37e1, 0x08},
+	{0x37e2, 0x10},
+	{0x37e3, 0x04},
+	{0x37e4, 0x04},
+	{0x37e5, 0x03},
+	{0x37e6, 0x04},
+	{0x3b00, 0x00},
+	{0x3c80, 0x00},
+	{0x3c88, 0x02},
+	{0x3c8c, 0x07},
+	{0x3c8d, 0x40},
+	{0x3cc7, 0x80},
+	{0x4000, 0xc3},
+	{0x4001, 0xe0},
+	{0x4003, 0x40},
+	{0x4008, 0x02},
+	{0x4009, 0x19},
+	{0x400a, 0x01},
+	{0x400b, 0x6c},
+	{0x4011, 0x00},
+	{0x4041, 0x00},
+	{0x4300, 0xff},  /* IR/Monochrome mode */
+	{0x4301, 0x00},
+	{0x4302, 0x0f},
+	{0x4503, 0x00},
+	{0x4601, 0x50},
+	{0x481f, 0x34},
+	{0x4825, 0x33},
+	{0x4837, 0x14},
+	{0x4881, 0x40},
+	{0x4883, 0x01},
+	{0x4890, 0x00},
+	{0x4901, 0x00},
+	{0x4902, 0x00},
+	{0x4b00, 0x2a},
+	{0x4b0d, 0x00},
+	{0x450a, 0x04},
+	{0x450b, 0x00},
+	{0x5000, 0x65},
+	{0x5004, 0x00},
+	{0x5080, 0x40},
+	{0x5200, 0x18},
+};
+
+/* Dell-specified IR resolution 640x400 @ 30fps */
+static const struct ov01a1b_reg sensor_640x400_ir_setting[] = {
+	/* Window settings */
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0x00},
+	{0x3804, 0x05},
+	{0x3805, 0x0f},
+	{0x3806, 0x03},
+	{0x3807, 0x2f},
+	{0x3808, 0x02},  /* H_OUTPUT_SIZE = 640 */
+	{0x3809, 0x80},
+	{0x380a, 0x01},  /* V_OUTPUT_SIZE = 400 */
+	{0x380b, 0x90},
+	{0x380c, 0x03},  /* HTS = 768 */
+	{0x380d, 0x00},
+	{0x380e, 0x02},  /* VTS = 512 for ~30fps */
+	{0x380f, 0x00},
+	{0x3810, 0x00},
+	{0x3811, 0x04},
+	{0x3812, 0x00},
+	{0x3813, 0x04},
+	{0x3814, 0x03},  /* H_INC = 3 (binning) */
+	{0x3815, 0x03},  /* V_INC = 3 (binning) */
+	{0x3816, 0x03},
+	{0x3817, 0x03},
+	{0x3820, 0xa0},  /* Format control with IR mode bits */
+	{0x3822, 0x03},
+	{0x3832, 0x28},
+	{0x3833, 0x10},
+	{0x373d, 0x24},
+	{0x4300, 0xff},  /* Ensure IR mode */
+};
+
+/* Native resolution 1280x800 for calibration/alignment */
+static const struct ov01a1b_reg sensor_1280x800_ir_setting[] = {
+	{0x3800, 0x00},
+	{0x3801, 0x00},
+	{0x3802, 0x00},
+	{0x3803, 0x00},
+	{0x3804, 0x05},
+	{0x3805, 0x0f},
+	{0x3806, 0x03},
+	{0x3807, 0x2f},
+	{0x3808, 0x05},  /* H_OUTPUT_SIZE = 1280 */
+	{0x3809, 0x00},
+	{0x380a, 0x03},  /* V_OUTPUT_SIZE = 800 */
+	{0x380b, 0x20},
+	{0x380c, 0x02},  /* HTS = 744 */
+	{0x380d, 0xe8},
+	{0x380e, 0x03},  /* VTS = 896 */
+	{0x380f, 0x80},
+	{0x3810, 0x00},
+	{0x3811, 0x08},
+	{0x3812, 0x00},
+	{0x3813, 0x08},
+	{0x3814, 0x01},  /* No binning */
+	{0x3815, 0x01},
+	{0x3816, 0x01},
+	{0x3817, 0x01},
+	{0x3820, 0xa0},
+	{0x3822, 0x03},
+	{0x3832, 0x28},
+	{0x3833, 0x10},
+	{0x373d, 0x24},
+	{0x4300, 0xff},  /* IR mode */
+};
+
+
+
+
+
+enum {
+	OV01A1B_LINK_FREQ_400MHZ_INDEX,
+};
+
+
+static const struct ov01a1b_reg mipi_data_rate_720mbps[] = {
+};  
+  
+static const s64 link_freq_menu_items[] = {
+	OV01A1B_LINK_FREQ_400MHZ,
+};
+
+  static const struct ov01a1b_link_freq_config link_freq_configs[] = {
+    [OV01A1B_LINK_FREQ_400MHZ_INDEX] = {
+        .reg_list = {
+            .num_of_regs = ARRAY_SIZE(mipi_data_rate_720mbps),
+            .regs = mipi_data_rate_720mbps,
+        }
+    },
+};
+
+
 
 struct ov01a1b {
-    // struct v4l2_subdev sd;
-    //
+    // v4l2 layer
+    struct v4l2_subdev sd;
+    struct v4l2_ctrl_handler ctrl_handler;    
+    // controls
+    struct v4l2_ctrl *link_freq;
+    struct v4l2_ctrl *pixel_rate;
+    struct v4l2_ctrl *vblank;
+    struct v4l2_ctrl *hblank;
+    struct v4l2_ctrl *exposure;
+
+
+    // media
+    const struct ov01a1b_mode *cur_mode;
+    bool streaming;
+    
+    // async calls
+    struct mutex mutex;
 
     // hardware
-    u8 address;
-    struct i2c_client *client;
     struct clk *xvclk;
     struct gpio_desc *reset_gpio;
     struct gpio_desc *powerdown_gpio;
@@ -60,11 +335,106 @@ struct ov01a1b {
     u32 xvclk_freq;
 };
 
-static int write_register(struct ov01a1b *ov01a1b, u16 reg, u8 val)
+static inline struct ov01a1b *to_ov01a1b(struct v4l2_subdev *subdev)
 {
-    u8 buf[3] = { reg >> 8, reg & 0xff, val };
-    
-    return i2c_master_send(ov01a1b->client, buf, 3);
+	return container_of(subdev, struct ov01a1b, sd);
+}
+
+
+
+
+
+
+static const struct ov01a1b_mode supported_modes[] = {
+	{
+		/* Primary mode: Dell-specified 640x400 @ 30fps for Windows Hello */
+		.width = 640,
+		.height = 400,
+		.hts = 768,
+		.vts_def = OV01A1B_VTS_DEF_640,
+		.vts_min = OV01A1B_VTS_MIN,
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(sensor_640x400_ir_setting),
+			.regs = sensor_640x400_ir_setting,
+		},
+		.link_freq_index = OV01A1B_LINK_FREQ_400MHZ_INDEX,
+	},
+	{
+		/* Native resolution for calibration/alignment */
+		.width = 1280,
+		.height = 800,
+		.hts = 744,
+		.vts_def = 896,
+		.vts_min = 896,
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(sensor_1280x800_ir_setting),
+			.regs = sensor_1280x800_ir_setting,
+		},
+		.link_freq_index = OV01A1B_LINK_FREQ_400MHZ_INDEX,
+	},
+};
+
+ 
+
+
+static int ov01a1b_write_register(struct ov01a1b *ov01a1b, u16 reg, u16 len, u32 val)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+	u8 buf[6];
+	int ret = 0;
+
+	if (len > 4)
+		return -EINVAL;
+
+	put_unaligned_be16(reg, buf);
+	put_unaligned_be32(val << 8 * (4 - len), buf + 2);
+
+	ret = i2c_master_send(client, buf, len + 2);
+	if (ret != len + 2)
+		return ret < 0 ? ret : -EIO;
+
+	return 0;
+}
+
+// DUMMY FAIL
+static int ov01a1b_write_register_list(struct ov01a1b *ov01a1b, const struct ov01a1b_reg_list *r_list)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+//        unsigned int i;
+//        int ret = 0;
+      
+        return -EIO;
+}
+
+
+static int ov01a1b_read_register(struct ov01a1b *ov01a1b, u16 reg, u16 len, u32 *val)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+	struct i2c_msg msgs[2];
+	u8 addr_buf[2];
+	u8 data_buf[4] = {0};
+	int ret = 0;
+
+	if (len > sizeof(data_buf))
+		return -EINVAL;
+
+	put_unaligned_be16(reg, addr_buf);
+	msgs[0].addr = REG_CHIP_ID;
+	msgs[0].flags = 0;
+	msgs[0].len = sizeof(addr_buf);
+	msgs[0].buf = addr_buf;
+	msgs[1].addr = REG_CHIP_ID; 
+	msgs[1].flags = I2C_M_RD;
+	msgs[1].len = len;
+	msgs[1].buf = &data_buf[sizeof(data_buf) - len];
+
+	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
+	if (ret != ARRAY_SIZE(msgs))
+		return ret < 0 ? ret : -EIO;
+
+	*val = get_unaligned_be32(data_buf);
+
+	return 0;
 }
 
 static int read_register(struct ov01a1b *ov01a1b, u16 reg, u8 *val)
@@ -72,25 +442,28 @@ static int read_register(struct ov01a1b *ov01a1b, u16 reg, u8 *val)
     struct i2c_msg msgs[2];
     u8 reg_buf[2] = { reg >> 8, reg & 0xff };
     
-    msgs[0].addr = ov01a1b->address;
+    msgs[0].addr = REG_CHIP_ID;
     msgs[0].flags = 0;
     msgs[0].len = 2;
     msgs[0].buf = reg_buf;
     
-    msgs[1].addr = ov01a1b->address;
+    msgs[1].addr = REG_CHIP_ID;
     msgs[1].flags = I2C_M_RD;
     msgs[1].len = 1;
     msgs[1].buf = val;
-    
-    return i2c_transfer(ov01a1b->client->adapter, msgs, 2);
+
+    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+    return i2c_transfer(client->adapter, msgs, 2);
 }
 
 // Test basic sensor registers
 static void test_sensor_registers(struct ov01a1b *sensor)
 {
+
+    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
+    struct device *dev = &client->dev;
     u8 val;
 
-    struct device *dev = &sensor->client->dev;
 
     dev_info(dev, "\n=== Basic Register Test ===\n");
    
@@ -121,7 +494,9 @@ static void test_sensor_registers(struct ov01a1b *sensor)
 static void test_sensor_registers_extended(struct ov01a1b *sensor)
 {
     u8 val;
-    struct device *dev = &sensor->client->dev;
+
+    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
+    struct device *dev = &client->dev;
     
     dev_info(dev, "\n=== Extended Register Test ===\n");
     
@@ -209,7 +584,9 @@ static void test_sensor_registers_extended(struct ov01a1b *sensor)
 // Helper function to dump a register range
 static void dump_register_range(struct ov01a1b *sensor, u16 start, u16 end)
 {
-    struct device *dev = &sensor->client->dev;
+
+    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
+    struct device *dev = &client->dev;
     u8 val;
     int i;
     
@@ -224,7 +601,8 @@ static void dump_register_range(struct ov01a1b *sensor, u16 start, u16 end)
 // Try to find undocumented features
 static void probe_sensor_capabilities(struct ov01a1b *sensor)
 {
-    struct device *dev = &sensor->client->dev;
+    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
+    struct device *dev = &client->dev;
     u8 val;
     
     dev_info(dev, "\n=== Probing Sensor Capabilities ===\n");
@@ -244,227 +622,98 @@ static void probe_sensor_capabilities(struct ov01a1b *sensor)
     dev_info(dev, "Format2 (0x3821) = 0x%02x\n", val);
 }
 
-static void search_for_ir_modes(struct ov01a1b *sensor)
-{
-    struct device *dev = &sensor->client->dev;
-    u8 val;
-    
-    dev_info(dev, "\n=== Searching for IR/Face Recognition Modes ===\n");
-    
-    // Check binning/skipping registers
-    read_register(sensor, 0x3814, &val);
-    dev_info(dev, "H_INC (0x3814) = 0x%02x (horizontal subsampling)\n", val);
-    read_register(sensor, 0x3815, &val);
-    dev_info(dev, "V_INC (0x3815) = 0x%02x (vertical subsampling)\n", val);
-    
-    // Check for binning configuration
-    read_register(sensor, 0x3820, &val);
-    dev_info(dev, "Format1 (0x3820) = 0x%02x\n", val);
-    dev_info(dev, "  - Bit 0: Binning H = %d\n", val & 0x01);
-    dev_info(dev, "  - Bit 1: Binning V = %d\n", (val >> 1) & 0x01);
-    dev_info(dev, "  - Bit 7-6: Special mode = %d\n", (val >> 6) & 0x03);
-    
-    // Check ISP window size (might show actual output)
-    read_register(sensor, 0x5680, &val);
-    dev_info(dev, "ISP H_SIZE high (0x5680) = 0x%02x\n", val);
-    read_register(sensor, 0x5681, &val);
-    dev_info(dev, "ISP H_SIZE low (0x5681) = 0x%02x\n", val);
-    read_register(sensor, 0x5682, &val);
-    dev_info(dev, "ISP V_SIZE high (0x5682) = 0x%02x\n", val);
-    read_register(sensor, 0x5683, &val);
-    dev_info(dev, "ISP V_SIZE low (0x5683) = 0x%02x\n", val);
-    
-    // Check for IR-specific registers
-    dev_info(dev, "\nChecking IR-specific features:\n");
-    
-    // Common IR control registers in OmniVision sensors
-    read_register(sensor, 0x5300, &val);
-    dev_info(dev, "IR control (0x5300) = 0x%02x\n", val);
-    read_register(sensor, 0x5301, &val);
-    dev_info(dev, "IR control (0x5301) = 0x%02x\n", val);
-    
-    // Check if there's a mode select register
-    read_register(sensor, 0x3708, &val);
-    dev_info(dev, "Mode control? (0x3708) = 0x%02x\n", val);
-}
 
-// Test different resolutions by writing registers
-static int test_resolution_mode(struct ov01a1b *sensor, u16 width, u16 height)
+static int read_chip_id(struct ov01a1b *ov01a1b, u32 *val)
 {
-    struct device *dev = &sensor->client->dev;
-    u8 val;
+    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+    struct device *dev = &client->dev;
     int ret;
+    u32 chip_id;
     
-    dev_info(dev, "\n=== Testing %dx%d mode ===\n", width, height);
-    
-    // Try to set output size
-    ret = write_register(sensor, 0x3808, (width >> 8) & 0xff);
-    ret |= write_register(sensor, 0x3809, width & 0xff);
-    ret |= write_register(sensor, 0x380a, (height >> 8) & 0xff);
-    ret |= write_register(sensor, 0x380b, height & 0xff);
-    
-    if (ret < 0) {
-        dev_err(dev, "Failed to write resolution registers\n");
+    dev_info(&client->dev, "read chip id now");
+    ret = ov01a1b_read_register(ov01a1b, REG_CHIP_ID, 3, &chip_id);
+    if (ret) {
+        dev_err(dev, "Faield to read chip id for ov01a1v: %d", ret);
         return ret;
     }
-    
-    // Read back to verify
-    msleep(10);
-    read_register(sensor, 0x3808, &val);
-    dev_info(dev, "H_OUTPUT_SIZE high readback = 0x%02x\n", val);
-    read_register(sensor, 0x3809, &val);
-    dev_info(dev, "H_OUTPUT_SIZE low readback = 0x%02x\n", val);
-    read_register(sensor, 0x380a, &val);
-    dev_info(dev, "V_OUTPUT_SIZE high readback = 0x%02x\n", val);
-    read_register(sensor, 0x380b, &val);
-    dev_info(dev, "V_OUTPUT_SIZE low readback = 0x%02x\n", val);
-    
+
     return 0;
 }
 
-// Calculate and display timing information
-static void analyze_timing(struct ov01a1b *sensor)
+static int ov01a1b_check_i2c_address(struct ov01a1b *ov01a1b)
 {
-    struct device *dev = &sensor->client->dev;
-    u8 val_h, val_l;
-    u16 hts, vts, h_output, v_output;
-    u32 pixel_rate, fps;
-    
-    dev_info(dev, "\n=== Timing Analysis ===\n");
-    
-    // Read current values
-    read_register(sensor, 0x380c, &val_h);
-    read_register(sensor, 0x380d, &val_l);
-    hts = (val_h << 8) | val_l;
-    
-    read_register(sensor, 0x380e, &val_h);
-    read_register(sensor, 0x380f, &val_l);
-    vts = (val_h << 8) | val_l;
-    
-    read_register(sensor, 0x3808, &val_h);
-    read_register(sensor, 0x3809, &val_l);
-    h_output = (val_h << 8) | val_l;
-    
-    read_register(sensor, 0x380a, &val_h);
-    read_register(sensor, 0x380b, &val_l);
-    v_output = (val_h << 8) | val_l;
-    
-    dev_info(dev, "HTS (Horizontal Total Size): %d\n", hts);
-    dev_info(dev, "VTS (Vertical Total Size): %d\n", vts);
-    dev_info(dev, "Output resolution: %dx%d\n", h_output, v_output);
-    
-    // Assuming 19.2MHz clock (from your power sequence)
-    // This is simplified - actual calculation depends on PLL settings
-    pixel_rate = 19200000; // This would need PLL calculation
-    fps = pixel_rate / (hts * vts);
-    
-    dev_info(dev, "Estimated FPS (assuming direct clock): %d\n", fps);
-}
-
-// Try to find supported sensor modes
-static void probe_sensor_modes(struct ov01a1b *sensor)
-{
-    struct device *dev = &sensor->client->dev;
-    
-    dev_info(dev, "\n=== Probing Common IR Sensor Modes ===\n");
-    
-    // First analyze current timing
-    analyze_timing(sensor);
-    
-    // Search for IR-specific configurations
-    search_for_ir_modes(sensor);
-    
-    // Test writing different resolutions
-    // Note: We'll do a soft reset after to restore defaults
-    test_resolution_mode(sensor, 400, 400);  // Expected IR mode
-    test_resolution_mode(sensor, 640, 480);  // Common VGA
-    test_resolution_mode(sensor, 320, 240);  // QVGA
-    
-    // Soft reset to restore defaults
-    dev_info(dev, "\nPerforming soft reset to restore defaults...\n");
-    write_register(sensor, 0x0103, 0x01);
-    msleep(10);
-}
-
-static int ov01a1b_check_i2c_address(struct i2c_client *client, u8 addr)
-{
-    struct i2c_msg msg[2];
-    u8 reg_addr[2];
-    u8 chip_id[3];
+    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+    struct device *dev = &client->dev;
     u32 id_value;
     int ret;
-    
-    /* Read chip ID registers 0x300a, 0x300b, 0x300c */
-    reg_addr[0] = 0x30;
-    reg_addr[1] = 0x0a;
-    
-    msg[0].addr = addr;
-    msg[0].flags = 0;
-    msg[0].len = 2;
-    msg[0].buf = reg_addr;
-    
-    msg[1].addr = addr;
-    msg[1].flags = I2C_M_RD;
-    msg[1].len = 3;             // Read 3 bytes at once
-    msg[1].buf = chip_id;
-    
-    ret = i2c_transfer(client->adapter, msg, 2);
-    if (ret != 2) {
-        return ret < 0 ? ret : -EIO;
+
+    ret = read_chip_id(ov01a1b, &id_value);
+    if(ret){
+        dev_err(dev, "failed to read chip id");
+        return ret;
     }
-    
-    id_value = (chip_id[0] << 16) | (chip_id[1] << 8) | chip_id[2];
-    dev_info(&client->dev, "Chip ID at address 0x%02x: 0x%06x\n", addr, id_value);
-    
+        
+
     if (id_value == CHIP_ID) {
-        dev_info(&client->dev, "*** OV01A1B detected! ***\n");
-        return 1; // chip found
+    	dev_info(dev, "OV01A1B IR camera detected (chip id: 0x%06x)\n", id_value);
+        return 0; 
     }
+
     
-    return 0;
+    return -EIO;
 }
 
 
-static void ov01a1b_power_off(struct ov01a1b *power)
+static int ov01a1b_power_off_sequenz(struct ov01a1b *ov01a1b)
 {
 
-    struct device *dev = &power->client->dev;
+    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+    struct device *dev = &client->dev;
+
     dev_info(dev, "startign power off sequence...\n");
     
     /* Step 1: Assert reset (put sensor in reset) */
-    if (power->reset_gpio)
-        gpiod_set_value_cansleep(power->reset_gpio, 1);
+    if (ov01a1b->reset_gpio)
+        gpiod_set_value_cansleep(ov01a1b->reset_gpio, 1);
 
     /* Small delay to ensure reset is registered */
     usleep_range(1000, 1500);
     
     /* Step 2: Assert powerdown */
-    if (power->powerdown_gpio)
-        gpiod_set_value_cansleep(power->powerdown_gpio, 1);
+    if (ov01a1b->powerdown_gpio)
+        gpiod_set_value_cansleep(ov01a1b->powerdown_gpio, 1);
     
     /* Step 3: Disable clock */
-    clk_disable_unprepare(power->xvclk);
+    clk_disable_unprepare(ov01a1b->xvclk);
     
     /* Step 4: Disable regulators (reverse order!) */
-    regulator_bulk_disable(ARRAY_SIZE(power->supplies),
-                          power->supplies);
+    regulator_bulk_disable(ARRAY_SIZE(ov01a1b->supplies),
+                          ov01a1b->supplies);
 
-    dev_info(dev, "Power off complete\n");
+    // give the chip time to stop
+    msleep(50);
+
+    if(ov01a1b_check_i2c_address(ov01a1b) == 0) {
+        dev_err(dev, "ERROR: Sensor still responding after power off!\n");
+        return -ENODEV;
+    }
+    return 0;
 }
 
 
-static int ov01a1b_power_on_sequence(struct ov01a1b *power)
+static int ov01a1b_power_on_sequence(struct ov01a1b *ov01a1b)
 {
-    struct device *dev = &power->client->dev;
+    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+    struct device *dev = &client->dev;
     int ret;
     
     dev_info(dev, "Starting OV01A10-style power sequence...\n");
     
     /* Step 1: Enable regulators (if available) */
-    if (power->supplies[0].consumer) {
+    if (ov01a1b->supplies[0].consumer) {
         dev_info(dev, "Enabling regulators...\n");
-        ret = regulator_bulk_enable(ARRAY_SIZE(power->supplies), 
-                                    power->supplies);
+        ret = regulator_bulk_enable(ARRAY_SIZE(ov01a1b->supplies), 
+                                    ov01a1b->supplies);
         if (ret < 0) {
             dev_err(dev, "Failed to enable regulators: %d\n", ret);
             /* Continue anyway, might not be required */
@@ -475,15 +724,15 @@ static int ov01a1b_power_on_sequence(struct ov01a1b *power)
     }
     
     /* Step 2: Enable clock (if available) */
-    if (power->xvclk) {
-        dev_info(dev, "Enabling XVCLK at %u Hz...\n", power->xvclk_freq);
+    if (ov01a1b->xvclk) {
+        dev_info(dev, "Enabling XVCLK at %u Hz...\n", ov01a1b->xvclk_freq);
         
-        ret = clk_set_rate(power->xvclk, power->xvclk_freq);
+        ret = clk_set_rate(ov01a1b->xvclk, ov01a1b->xvclk_freq);
         if (ret < 0) {
             dev_warn(dev, "Failed to set xvclk rate: %d\n", ret);
         }
         
-        ret = clk_prepare_enable(power->xvclk);
+        ret = clk_prepare_enable(ov01a1b->xvclk);
         if (ret < 0) {
             dev_err(dev, "Failed to enable xvclk: %d\n", ret);
             /* Continue anyway */
@@ -496,20 +745,20 @@ static int ov01a1b_power_on_sequence(struct ov01a1b *power)
     }
     
     /* Step 3: Release powerdown (if available) */
-    if (power->powerdown_gpio) {
+    if (ov01a1b->powerdown_gpio) {
         dev_info(dev, "Releasing powerdown...\n");
-        gpiod_set_value_cansleep(power->powerdown_gpio, 0);
+        gpiod_set_value_cansleep(ov01a1b->powerdown_gpio, 0);
         usleep_range(1000, 1500);
     }
     
     /* Step 4: Toggle reset (if available) */
-    if (power->reset_gpio) {
+    if (ov01a1b->reset_gpio) {
         dev_info(dev, "Toggling reset...\n");
         /* Assert reset */
-        gpiod_set_value_cansleep(power->reset_gpio, 1);
+        gpiod_set_value_cansleep(ov01a1b->reset_gpio, 1);
         usleep_range(1000, 1500);
         /* Deassert reset */
-        gpiod_set_value_cansleep(power->reset_gpio, 0);
+        gpiod_set_value_cansleep(ov01a1b->reset_gpio, 0);
         /* Wait for sensor to boot - this is critical! */
         msleep(20);
     }
@@ -520,126 +769,360 @@ static int ov01a1b_power_on_sequence(struct ov01a1b *power)
     
     /* Step 6: test address */
     dev_info(dev, "Probing I2C address...\n");
-    ret = ov01a1b_check_i2c_address(power->client, power->address);
-    if (ret == 0) {
-        dev_info(dev, "Found device at address 0x%02x!\n", power->address);
+    ret = ov01a1b_check_i2c_address(ov01a1b);
+    if (ret) {
+        return ret;
     }
     
     return 0;
+
 }
 
-static int ov01a1b_power_test_probe(struct i2c_client *client)
+///////////////////////////////////////////////
+/////////////////////////////////////////////
+///
+///
+static void ov01a1b_update_pad_format(const struct ov01a1b_mode *mode,
+                                      struct v4l2_mbus_framefmt *fmt)
+{
+        fmt->width = mode->width;
+        fmt->height = mode->height;
+        /* IR sensor outputs monochrome data */
+        fmt->code = MEDIA_BUS_FMT_Y10_1X10;    
+        fmt->field = V4L2_FIELD_NONE;         
+}
+
+
+
+
+static int ov01a1b_set_format(struct v4l2_subdev *sd,
+			      struct v4l2_subdev_state *sd_state,
+			      struct v4l2_subdev_format *fmt)
+{
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+	const struct ov01a1b_mode *mode;
+	s32 vblank_def, h_blank;
+
+	mode = v4l2_find_nearest_size(supported_modes,
+				      ARRAY_SIZE(supported_modes), width,
+				      height, fmt->format.width,
+				      fmt->format.height);
+
+	mutex_lock(&ov01a1b->mutex);
+	ov01a1b_update_pad_format(mode, &fmt->format);
+	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+		*v4l2_subdev_state_get_format(sd_state, fmt->pad) = fmt->format;
+	} else {
+		ov01a1b->cur_mode = mode;
+		__v4l2_ctrl_s_ctrl(ov01a1b->link_freq, mode->link_freq_index);
+		__v4l2_ctrl_s_ctrl_int64(ov01a1b->pixel_rate, OV01A1B_SCLK);
+
+		/* Update limits and set FPS to default */
+		vblank_def = mode->vts_def - mode->height;
+		__v4l2_ctrl_modify_range(ov01a1b->vblank,
+					 mode->vts_min - mode->height,
+					 OV01A1B_VTS_MAX - mode->height, 1,
+					 vblank_def);
+		__v4l2_ctrl_s_ctrl(ov01a1b->vblank, vblank_def);
+		h_blank = mode->hts - mode->width;
+		__v4l2_ctrl_modify_range(ov01a1b->hblank, h_blank, h_blank, 1,
+					 h_blank);
+	}
+	mutex_unlock(&ov01a1b->mutex);
+
+	return 0;
+}
+
+static int ov01a1b_get_format(struct v4l2_subdev *sd,
+			      struct v4l2_subdev_state *sd_state,
+			      struct v4l2_subdev_format *fmt)
+{
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+
+	mutex_lock(&ov01a1b->mutex);
+	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
+		fmt->format = *v4l2_subdev_state_get_format(
+							  sd_state, fmt->pad);
+	else
+		ov01a1b_update_pad_format(ov01a1b->cur_mode, &fmt->format);
+
+	mutex_unlock(&ov01a1b->mutex);
+
+	return 0;
+}
+
+static int ov01a1b_enum_mbus_code(struct v4l2_subdev *sd,
+				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_mbus_code_enum *code)
+{
+	if (code->index > 0)
+		return -EINVAL;
+
+	/* IR sensor outputs monochrome data */
+	code->code = MEDIA_BUS_FMT_Y10_1X10;
+
+	return 0;
+}
+
+
+static int ov01a1b_enum_frame_size(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_frame_size_enum *fse)
+{
+	if (fse->index >= ARRAY_SIZE(supported_modes))
+		return -EINVAL;
+
+	if (fse->code != MEDIA_BUS_FMT_Y10_1X10)
+		return -EINVAL;
+
+	fse->min_width = supported_modes[fse->index].width;
+	fse->max_width = fse->min_width;
+	fse->min_height = supported_modes[fse->index].height;
+	fse->max_height = fse->min_height;
+
+	return 0;
+}
+
+static int ov01a1b_start_streaming(struct ov01a1b *ov01a1b)
+{
+    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+    const struct ov01a1b_reg_list *reg_list;
+    struct ov01a1b_reg_list init_list = {
+    	.num_of_regs = ARRAY_SIZE(sensor_ir_init),
+    	.regs = sensor_ir_init,
+    };
+    int link_freq_index;
+    int ret = 0;
+    
+    /* Apply common IR initialization */
+    ret = ov01a1b_write_register_list(ov01a1b, &init_list);
+    if (ret) {
+    	dev_err(&client->dev, "failed to set IR init registers");
+    	return ret;
+    }
+    
+    link_freq_index = ov01a1b->cur_mode->link_freq_index;
+    reg_list = &link_freq_configs[link_freq_index].reg_list;
+    ret = ov01a1b_write_register_list(ov01a1b, reg_list);
+    if (ret) {
+    	dev_err(&client->dev, "failed to set plls");
+    	return ret;
+    }
+    
+    /* Apply mode specific settings */
+    reg_list = &ov01a1b->cur_mode->reg_list;
+    ret = ov01a1b_write_register_list(ov01a1b, reg_list);
+    if (ret) {
+    	dev_err(&client->dev, "failed to set mode");
+    	return ret;
+    }
+    
+    ret = __v4l2_ctrl_handler_setup(ov01a1b->sd.ctrl_handler);
+    if (ret)
+    	return ret;
+    
+    ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_MODE_SELECT, 1, OV01A1B_MODE_STREAMING);
+    if (ret)
+    	dev_err(&client->dev, "failed to start streaming");
+    
+    return ret;
+}
+
+static void ov01a1b_stop_streaming(struct ov01a1b *ov01a1b)
+{
+    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+    int ret = 0;
+    
+    ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_MODE_SELECT, 1, OV01A1B_MODE_STANDBY);
+    if (ret)
+    	dev_err(&client->dev, "failed to stop streaming");
+}
+
+
+static int ov01a1b_set_stream(struct v4l2_subdev *sd, int enable)
+{
+        struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+	int ret = 0;
+
+	if (ov01a1b->streaming == enable)
+		return 0;
+
+	mutex_lock(&ov01a1b->mutex);
+	if (enable) {
+		ret = pm_runtime_get_sync(&client->dev);
+		if (ret < 0) {
+			pm_runtime_put_noidle(&client->dev);
+			mutex_unlock(&ov01a1b->mutex);
+			return ret;
+		}
+
+		ret = ov01a1b_start_streaming(ov01a1b);
+		if (ret) {
+			enable = 0;
+			ov01a1b_stop_streaming(ov01a1b);
+			pm_runtime_put(&client->dev);
+		}
+	} else {
+		ov01a1b_stop_streaming(ov01a1b);
+		pm_runtime_put(&client->dev);
+	}
+
+	ov01a1b->streaming = enable;
+	mutex_unlock(&ov01a1b->mutex);
+
+	return ret;
+}
+
+
+static const struct v4l2_subdev_video_ops ov01a1b_video_ops = {
+	.s_stream = ov01a1b_set_stream,
+};
+
+static const struct v4l2_subdev_pad_ops ov01a1b_pad_ops = {
+	.set_fmt = ov01a1b_set_format,
+	.get_fmt = ov01a1b_get_format,
+	.enum_mbus_code = ov01a1b_enum_mbus_code,
+	.enum_frame_size = ov01a1b_enum_frame_size,
+};
+
+static const struct v4l2_subdev_ops ov01a1b_subdev_ops = {
+	.video = &ov01a1b_video_ops,
+	.pad = &ov01a1b_pad_ops,
+};
+
+
+
+static int ov01a1b_probe(struct i2c_client *client)
 {
     struct device *dev = &client->dev;
-    struct ov01a1b *power;
+    struct ov01a1b *ov01a1b;
     int ret;
-    
+
+  // only target platform   
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 15, 3)
+#if IS_ENABLED(CONFIG_INTEL_SKL_INT3472)
+
     dev_info(dev, "\n=== OV01A1B Power Test Probe ===\n");
     dev_info(dev, "Client address: 0x%02x\n", client->addr);
     dev_info(dev, "Adapter: %s\n", client->adapter->name);
+#else
+#error "CONFIG_INTEL_SKL_INT3472 must be enabled."
+#endif
+#else
+#error "KERNEL_VERSION must greater than 6.15.3 ."
+#endif
+
     
-    power = devm_kzalloc(dev, sizeof(*power), GFP_KERNEL);
-    if (!power)
-        return -ENOMEM;
+
+    ov01a1b = devm_kzalloc(&client->dev, sizeof(*ov01a1b), GFP_KERNEL);
+    if (!ov01a1b)
+    	return -ENOMEM;
     
-    power->client = client;
+    v4l2_i2c_subdev_init(&ov01a1b->sd, client, &ov01a1b_subdev_ops);
     
     /* Try to get clock - based on OV01A10 */
-    power->xvclk = devm_clk_get(dev, "xvclk");
-    if (IS_ERR(power->xvclk)) {
+    ov01a1b->xvclk = devm_clk_get(dev, "xvclk");
+    if (IS_ERR(ov01a1b->xvclk)) {
         dev_info(dev, "No xvclk found, trying default names...\n");
-        power->xvclk = devm_clk_get(dev, NULL);
-        if (IS_ERR(power->xvclk)) {
-            power->xvclk = NULL;
+        ov01a1b->xvclk = devm_clk_get(dev, NULL);
+        if (IS_ERR(ov01a1b->xvclk)) {
+            ov01a1b->xvclk = NULL;
             dev_warn(dev, "No clock found - continuing without\n");
         }
     }
     
     /* Default to 19.2 MHz like OV01A10 */
-    power->xvclk_freq = 19200000;
+    ov01a1b->xvclk_freq = 19200000;
     
     /* Try to get regulators - based on OV01A10 */
-    power->supplies[0].supply = "avdd";
-    power->supplies[1].supply = "dovdd";
-    power->supplies[2].supply = "dvdd";
+    ov01a1b->supplies[0].supply = "avdd";
+    ov01a1b->supplies[1].supply = "dovdd";
+    ov01a1b->supplies[2].supply = "dvdd";
     
-    ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(power->supplies),
-                                  power->supplies);
+    ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ov01a1b->supplies),
+                                  ov01a1b->supplies);
     if (ret < 0) {
         dev_info(dev, "Cannot get regulators, trying alternatives...\n");
         
         /* Try alternative names */
-        power->supplies[0].supply = "vana";
-        power->supplies[1].supply = "vio";
-        power->supplies[2].supply = "vdig";
+        ov01a1b->supplies[0].supply = "vana";
+        ov01a1b->supplies[1].supply = "vio";
+        ov01a1b->supplies[2].supply = "vdig";
         
-        ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(power->supplies),
-                                      power->supplies);
+        ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ov01a1b->supplies),
+                                      ov01a1b->supplies);
         if (ret < 0) {
             dev_warn(dev, "No regulators found - continuing without\n");
-            power->supplies[0].consumer = NULL;
+            ov01a1b->supplies[0].consumer = NULL;
         }
     }
     
     /* Try to get GPIOs */
-    power->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
-    if (IS_ERR(power->reset_gpio)) {
-        power->reset_gpio = NULL;
+    ov01a1b->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+    if (IS_ERR(ov01a1b->reset_gpio)) {
+        ov01a1b->reset_gpio = NULL;
         dev_warn(dev, "No reset GPIO found\n");
     }
     
-    power->powerdown_gpio = devm_gpiod_get_optional(dev, "powerdown", 
+    ov01a1b->powerdown_gpio = devm_gpiod_get_optional(dev, "powerdown", 
                                                      GPIOD_OUT_HIGH);
-    if (IS_ERR(power->powerdown_gpio)) {
-        power->powerdown_gpio = NULL;
+    if (IS_ERR(ov01a1b->powerdown_gpio)) {
+        ov01a1b->powerdown_gpio = NULL;
         dev_warn(dev, "No powerdown GPIO found\n");
     }
     
     /* Try alternative GPIO names */
-    if (!power->reset_gpio) {
-        power->reset_gpio = devm_gpiod_get_optional(dev, "xshutdown", 
+    if (!ov01a1b->reset_gpio) {
+        ov01a1b->reset_gpio = devm_gpiod_get_optional(dev, "xshutdown", 
                                                      GPIOD_OUT_HIGH);
     }
-    if (!power->powerdown_gpio) {
-        power->powerdown_gpio = devm_gpiod_get_optional(dev, "pwdn", 
+    if (!ov01a1b->powerdown_gpio) {
+        ov01a1b->powerdown_gpio = devm_gpiod_get_optional(dev, "pwdn", 
                                                          GPIOD_OUT_HIGH);
     }
     
     /* Execute power on sequence */
-    ret = ov01a1b_power_on_sequence(power);
-
-    power->address = 0x10;
-    ret = ov01a1b_check_i2c_address(power->client, power->address);
+    ret = ov01a1b_power_on_sequence(ov01a1b);
     if (ret == 0) {
-        dev_info(dev, "Device is working at address 0x%02x!\n", power->address);
+        dev_info(dev, "Device is working: %d\n", ret);
     }
   
     // test and get informations
-    test_sensor_registers(power);
-    test_sensor_registers_extended(power);
-    probe_sensor_capabilities(power);
-    search_for_ir_modes(power);
-    probe_sensor_modes(power);
-
-    /* Execute power off sequence */
-    ov01a1b_power_off(power);
-    msleep(10);
-    /* Try to read chip ID - should fail */
-
-    ret = ov01a1b_check_i2c_address(power->client, power->address);
-    if (ret == 0) {
-      dev_err(dev, "ERROR: Sensor still responding after power off!\n");
-    } else {
-        dev_info(dev, "Good: Sensor not responding after power off\n");
+    //test_sensor_registers(ov01a1b);
+    //test_sensor_registers_extended(ov01a1b);
+    mutex_init(&ov01a1b->mutex);
+    ov01a1b->cur_mode = &supported_modes[0];
+    ret = ov01a10_init_controls(ov01a10);
+    if (ret) {
+    	dev_err(&client->dev, "failed to init controls: %d", ret);
+    	goto probe_error_v4l2_ctrl_handler_free;
     }
 
+
+    /* Execute power off sequence */
+    ret = ov01a1b_power_off_sequenz(ov01a1b);
+    if(ret ){
+        return -ENODEV;
+    }
+
+    dev_info(dev, "Good: Sensor not responding after power off\n");
     dev_info(dev, "\n=== Test Complete ===\n");
     
     /* Always return error to avoid binding */
-    return -ENODEV;
+    // TEST SETTING
+    // return -ENODEV;
+    return 0;
+error_media_entity:
+    media_entity_cleanup(&ov01a1b->sd.entity);
+error_handler_free:
+    v4l2_ctrl_handler_free(&ov01a1b->ctrl_handler);
+    mutex_destroy(&ov01a1b->mutex);
+probe_error_ret:
+	return ret;
 }
 
-static void ov01a1b_power_test_remove(struct i2c_client *client)
+static void ov01a1b_remove(struct i2c_client *client)
 {
     dev_info(&client->dev, "OV01A1B power test remove\n");
 }
@@ -656,17 +1139,17 @@ static const struct i2c_device_id ov01a1b_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, ov01a1b_id);
 
-static struct i2c_driver ov01a1b_power_test_driver = {
+static struct i2c_driver ov01a1b_driver = {
     .driver = {
         .name = DRIVER_NAME,
         .acpi_match_table = ov01a1b_acpi_ids,
     },
-    .probe = ov01a1b_power_test_probe,
-    .remove = ov01a1b_power_test_remove,
+    .probe = ov01a1b_probe,
+    .remove = ov01a1b_remove,
     .id_table = ov01a1b_id,
 };
 
-module_i2c_driver(ov01a1b_power_test_driver);
+module_i2c_driver(ov01a1b_driver);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Niklas Bartz");

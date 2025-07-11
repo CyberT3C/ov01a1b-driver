@@ -15,7 +15,7 @@ find /sys/bus/acpi/devices -name "*OVTI01AB*" 2>/dev/null | head -5
 echo ""
 echo "=== dmesg output ==="
 sudo dmesg | tail -50 | grep -E "ov01a1b|OV01A1B|OVTI01AB"
-sudo dmesg | grep -A 30 "OV01A1B Power Test Probe"
+sudo dmesg | grep -A 60 "OV01A1B Power Test Probe"
 
 echo ""
 echo "Unloading module..."
