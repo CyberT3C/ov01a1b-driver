@@ -394,18 +394,29 @@ static int ov01a1b_write_register(struct ov01a1b *ov01a1b, u16 reg, u16 len, u32
 		return ret < 0 ? ret : -EIO;
 
 	return 0;
+
 }
 
-// DUMMY FAIL
-static int ov01a1b_write_register_list(struct ov01a1b *ov01a1b, const struct ov01a1b_reg_list *r_list)
+static int ov01a1b_write_register_list(struct ov01a1b *ov01a1b,
+				  const struct ov01a1b_reg_list *r_list)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
-//        unsigned int i;
-//        int ret = 0;
-      
-        return -EIO;
-}
+	unsigned int i;
+	int ret = 0;
 
+	for (i = 0; i < r_list->num_of_regs; i++) {
+		ret = ov01a1b_write_register(ov01a1b, r_list->regs[i].address, 1,
+					r_list->regs[i].val);
+		if (ret) {
+			dev_err_ratelimited(&client->dev,
+					    "write reg 0x%4.4x return err = %d",
+					    r_list->regs[i].address, ret);
+			return ret;
+		}
+	}
+
+	return 0;
+}
 
 static int ov01a1b_read_register(struct ov01a1b *ov01a1b, u16 reg, u16 len, u32 *val)
 {
@@ -437,190 +448,6 @@ static int ov01a1b_read_register(struct ov01a1b *ov01a1b, u16 reg, u16 len, u32 
 	return 0;
 }
 
-static int read_register(struct ov01a1b *ov01a1b, u16 reg, u8 *val)
-{
-    struct i2c_msg msgs[2];
-    u8 reg_buf[2] = { reg >> 8, reg & 0xff };
-    
-    msgs[0].addr = REG_CHIP_ID;
-    msgs[0].flags = 0;
-    msgs[0].len = 2;
-    msgs[0].buf = reg_buf;
-    
-    msgs[1].addr = REG_CHIP_ID;
-    msgs[1].flags = I2C_M_RD;
-    msgs[1].len = 1;
-    msgs[1].buf = val;
-
-    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
-    return i2c_transfer(client->adapter, msgs, 2);
-}
-
-// Test basic sensor registers
-static void test_sensor_registers(struct ov01a1b *sensor)
-{
-
-    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
-    struct device *dev = &client->dev;
-    u8 val;
-
-
-    dev_info(dev, "\n=== Basic Register Test ===\n");
-   
-
-    // I know
-    read_register(sensor, 0x3001, &val);
-    dev_info(dev, "Reg 0x3001 = 0x%02x\n", val);
-    
-    read_register(sensor, 0x3002, &val);
-    dev_info(dev, "Reg 0x3002 = 0x%02x\n", val);
-
-
-    // Check for monochrome/RAW format
-    read_register(sensor, 0x4300, &val);  // Format control
-    dev_info(dev, "Format control (0x4300) = 0x%02x\n", val);
-    
-    // Check MIPI lanes configuration
-    read_register(sensor, 0x4800, &val);
-    dev_info(dev, "MIPI control (0x4800) = 0x%02x\n", val);
-    // 0x04 might mean 1-lane MIPI (common for low-res sensors)
-    
-    // Check for IR-specific features
-    read_register(sensor, 0x5000, &val);
-    dev_info(dev, "ISP control (0x5000) = 0x%02x\n", val);
-    // 0x75 from your dump might have IR-specific bits
-}
-
-static void test_sensor_registers_extended(struct ov01a1b *sensor)
-{
-    u8 val;
-
-    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
-    struct device *dev = &client->dev;
-    
-    dev_info(dev, "\n=== Extended Register Test ===\n");
-    
-    // Chip ID registers (already working)
-    read_register(sensor, 0x300a, &val);
-    dev_info(dev, "Chip ID High (0x300a) = 0x%02x\n", val);
-    read_register(sensor, 0x300b, &val);
-    dev_info(dev, "Chip ID Mid (0x300b) = 0x%02x\n", val);
-    read_register(sensor, 0x300c, &val);
-    dev_info(dev, "Chip ID Low (0x300c) = 0x%02x\n", val);
-    
-    // System control registers
-    read_register(sensor, 0x0100, &val);  // Mode select
-    dev_info(dev, "Mode select (0x0100) = 0x%02x\n", val);
-    read_register(sensor, 0x0103, &val);  // Software reset
-    dev_info(dev, "Software reset (0x0103) = 0x%02x\n", val);
-    
-    // PLL registers (important for clock config)
-    read_register(sensor, 0x0300, &val);
-    dev_info(dev, "PLL1 ctrl (0x0300) = 0x%02x\n", val);
-    read_register(sensor, 0x0301, &val);
-    dev_info(dev, "PLL1 ctrl (0x0301) = 0x%02x\n", val);
-    read_register(sensor, 0x0302, &val);
-    dev_info(dev, "PLL1 ctrl (0x0302) = 0x%02x\n", val);
-    read_register(sensor, 0x0303, &val);
-    dev_info(dev, "PLL1 ctrl (0x0303) = 0x%02x\n", val);
-    
-    // Timing registers
-    read_register(sensor, 0x3800, &val);
-    dev_info(dev, "H_START high (0x3800) = 0x%02x\n", val);
-    read_register(sensor, 0x3801, &val);
-    dev_info(dev, "H_START low (0x3801) = 0x%02x\n", val);
-    read_register(sensor, 0x3802, &val);
-    dev_info(dev, "V_START high (0x3802) = 0x%02x\n", val);
-    read_register(sensor, 0x3803, &val);
-    dev_info(dev, "V_START low (0x3803) = 0x%02x\n", val);
-    
-    // Output size
-    read_register(sensor, 0x3808, &val);
-    dev_info(dev, "H_OUTPUT_SIZE high (0x3808) = 0x%02x\n", val);
-    read_register(sensor, 0x3809, &val);
-    dev_info(dev, "H_OUTPUT_SIZE low (0x3809) = 0x%02x\n", val);
-    read_register(sensor, 0x380a, &val);
-    dev_info(dev, "V_OUTPUT_SIZE high (0x380a) = 0x%02x\n", val);
-    read_register(sensor, 0x380b, &val);
-    dev_info(dev, "V_OUTPUT_SIZE low (0x380b) = 0x%02x\n", val);
-    
-    // Total size (for FPS calculation)
-    read_register(sensor, 0x380c, &val);
-    dev_info(dev, "HTS high (0x380c) = 0x%02x\n", val);
-    read_register(sensor, 0x380d, &val);
-    dev_info(dev, "HTS low (0x380d) = 0x%02x\n", val);
-    read_register(sensor, 0x380e, &val);
-    dev_info(dev, "VTS high (0x380e) = 0x%02x\n", val);
-    read_register(sensor, 0x380f, &val);
-    dev_info(dev, "VTS low (0x380f) = 0x%02x\n", val);
-    
-    // Exposure control
-    read_register(sensor, 0x3500, &val);
-    dev_info(dev, "Exposure[19:16] (0x3500) = 0x%02x\n", val);
-    read_register(sensor, 0x3501, &val);
-    dev_info(dev, "Exposure[15:8] (0x3501) = 0x%02x\n", val);
-    read_register(sensor, 0x3502, &val);
-    dev_info(dev, "Exposure[7:0] (0x3502) = 0x%02x\n", val);
-    
-    // Gain control
-    read_register(sensor, 0x3508, &val);
-    dev_info(dev, "Gain high (0x3508) = 0x%02x\n", val);
-    read_register(sensor, 0x3509, &val);
-    dev_info(dev, "Gain low (0x3509) = 0x%02x\n", val);
-    
-    // MIPI control
-    read_register(sensor, 0x4800, &val);
-    dev_info(dev, "MIPI ctrl (0x4800) = 0x%02x\n", val);
-    read_register(sensor, 0x4801, &val);
-    dev_info(dev, "MIPI ctrl (0x4801) = 0x%02x\n", val);
-    
-    // Test pattern
-    read_register(sensor, 0x5080, &val);
-    dev_info(dev, "Test pattern (0x5080) = 0x%02x\n", val);
-    
-    dev_info(dev, "=== End Extended Register Test ===\n");
-}
-
-// Helper function to dump a register range
-static void dump_register_range(struct ov01a1b *sensor, u16 start, u16 end)
-{
-
-    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
-    struct device *dev = &client->dev;
-    u8 val;
-    int i;
-    
-    dev_info(dev, "\nDumping registers 0x%04x - 0x%04x:\n", start, end);
-    for (i = start; i <= end; i++) {
-        if (read_register(sensor, i, &val) == 2) {
-            dev_info(dev, "  0x%04x = 0x%02x\n", i, val);
-        }
-    }
-}
-
-// Try to find undocumented features
-static void probe_sensor_capabilities(struct ov01a1b *sensor)
-{
-    struct i2c_client *client = v4l2_get_subdevdata(&sensor->sd);
-    struct device *dev = &client->dev;
-    u8 val;
-    
-    dev_info(dev, "\n=== Probing Sensor Capabilities ===\n");
-    
-    // Check for common OmniVision register ranges
-    dump_register_range(sensor, 0x3000, 0x3010);  // System control
-    dump_register_range(sensor, 0x3800, 0x3810);  // Timing
-    dump_register_range(sensor, 0x5000, 0x5010);  // ISP control
-    
-    // Try to identify supported modes by checking certain registers
-    dev_info(dev, "\nChecking for mode-specific registers...\n");
-    
-    // Some sensors have mode registers at 0x3820-0x3821
-    read_register(sensor, 0x3820, &val);
-    dev_info(dev, "Format1 (0x3820) = 0x%02x (bit 1: vflip, bit 2: hflip)\n", val);
-    read_register(sensor, 0x3821, &val);
-    dev_info(dev, "Format2 (0x3821) = 0x%02x\n", val);
-}
 
 
 static int read_chip_id(struct ov01a1b *ov01a1b, u32 *val)
@@ -778,46 +605,6 @@ static int ov01a1b_power_on_sequence(struct ov01a1b *ov01a1b)
 
 }
 
-static int ov01a1b_suspend(struct device *dev)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
-	int ret = 0;
-
-	mutex_lock(&ov01a1b->mutex);
-	if (ov01a1b->streaming)
-		ov01a1b_stop_streaming(ov01a1b);
-
-        ov01a1b_power_off_sequenz(ov01a1b);
-	mutex_unlock(&ov01a1b->mutex);
-
-	return 0;
-}
-
-static int ov01a1b_resume(struct device *dev)
-{
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
-	int ret = 0;
-
-	mutex_lock(&ov01a1b->mutex);
-        ov01a1b_power_on_sequenz(ov01a1b);
-	if (!ov01a1b->streaming)
-		goto exit;
-
-	ret = ov01a10_start_streaming(ov01a1b);
-	if (ret) {
-		ov01a1b->streaming = false;
-		ov01a1b_stop_streaming_streaming(ov01a1b);
-	}
-
-exit:
-	mutex_unlock(&ov01a1b->mutex);
-	return ret;
-}
-
 ///////////////////////////////////////////////
 /////////////////////////////////////////////
 ///
@@ -923,52 +710,10 @@ static int ov01a1b_enum_frame_size(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int ov01a1b_start_streaming(struct ov01a1b *ov01a1b)
-{
-    struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
-    const struct ov01a1b_reg_list *reg_list;
-    struct ov01a1b_reg_list init_list = {
-    	.num_of_regs = ARRAY_SIZE(sensor_ir_init),
-    	.regs = sensor_ir_init,
-    };
-    int link_freq_index;
-    int ret = 0;
-    
-    /* Apply common IR initialization */
-    ret = ov01a1b_write_register_list(ov01a1b, &init_list);
-    if (ret) {
-    	dev_err(&client->dev, "failed to set IR init registers");
-    	return ret;
-    }
-    
-    link_freq_index = ov01a1b->cur_mode->link_freq_index;
-    reg_list = &link_freq_configs[link_freq_index].reg_list;
-    ret = ov01a1b_write_register_list(ov01a1b, reg_list);
-    if (ret) {
-    	dev_err(&client->dev, "failed to set plls");
-    	return ret;
-    }
-    
-    /* Apply mode specific settings */
-    reg_list = &ov01a1b->cur_mode->reg_list;
-    ret = ov01a1b_write_register_list(ov01a1b, reg_list);
-    if (ret) {
-    	dev_err(&client->dev, "failed to set mode");
-    	return ret;
-    }
-    
-    ret = __v4l2_ctrl_handler_setup(ov01a1b->sd.ctrl_handler);
-    if (ret)
-    	return ret;
-    
-    ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_MODE_SELECT, 1, OV01A1B_MODE_STREAMING);
-    if (ret)
-    	dev_err(&client->dev, "failed to start streaming");
-    
-    return ret;
-}
 
-static void ov01a1b_stop_streaming(struct ov01a1b *ov01a1b)
+
+
+static int ov01a1b_stop_streaming(struct ov01a1b *ov01a1b)
 {
     struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
     int ret = 0;
@@ -976,6 +721,54 @@ static void ov01a1b_stop_streaming(struct ov01a1b *ov01a1b)
     ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_MODE_SELECT, 1, OV01A1B_MODE_STANDBY);
     if (ret)
     	dev_err(&client->dev, "failed to stop streaming");
+    return ret;
+}
+
+
+static int ov01a1b_start_streaming(struct ov01a1b *ov01a1b)
+{
+        struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd);
+	const struct ov01a1b_reg_list *reg_list;
+	struct ov01a1b_reg_list init_list = {
+		.num_of_regs = ARRAY_SIZE(sensor_ir_init),
+		.regs = sensor_ir_init,
+	};
+	int link_freq_index;
+	int ret = 0;
+
+	/* Apply common IR initialization */
+	ret = ov01a1b_write_register_list(ov01a1b, &init_list);
+	if (ret) {
+		dev_err(&client->dev, "failed to set IR init registers");
+		return ret;
+	}
+
+	link_freq_index = ov01a1b->cur_mode->link_freq_index;
+	reg_list = &link_freq_configs[link_freq_index].reg_list;
+	ret = ov01a1b_write_register_list(ov01a1b, reg_list);
+	if (ret) {
+		dev_err(&client->dev, "failed to set plls");
+		return ret;
+	}
+
+	/* Apply mode specific settings */
+	reg_list = &ov01a1b->cur_mode->reg_list;
+	ret = ov01a1b_write_register_list(ov01a1b, reg_list);
+	if (ret) {
+		dev_err(&client->dev, "failed to set mode");
+		return ret;
+	}
+
+	ret = __v4l2_ctrl_handler_setup(ov01a1b->sd.ctrl_handler);
+	if (ret)
+		return ret;
+
+	ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_MODE_SELECT, 1,
+				OV01A1B_MODE_STREAMING);
+	if (ret)
+		dev_err(&client->dev, "failed to start streaming");
+
+	return ret;
 }
 
 
@@ -1014,7 +807,51 @@ static int ov01a1b_set_stream(struct v4l2_subdev *sd, int enable)
 	return ret;
 }
 
+static int ov01a1b_suspend(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+	int ret;
 
+	mutex_lock(&ov01a1b->mutex);
+	if (ov01a1b->streaming)
+		ov01a1b_stop_streaming(ov01a1b);
+
+        ret = ov01a1b_power_off_sequenz(ov01a1b);
+	mutex_unlock(&ov01a1b->mutex);
+
+	return ret;
+}
+
+static int ov01a1b_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+	int ret = 0;
+
+	mutex_lock(&ov01a1b->mutex);
+        ret = ov01a1b_power_on_sequence(ov01a1b);
+        if(ret) {
+                goto exit;
+        }
+
+	if (!ov01a1b->streaming) {
+                ov01a1b_power_off_sequenz(ov01a1b);
+		goto exit;
+        }
+
+	ret = ov01a1b_start_streaming(ov01a1b);
+	if (ret) {
+		ov01a1b->streaming = false;
+		ov01a1b_stop_streaming(ov01a1b);
+	}
+
+exit:
+	mutex_unlock(&ov01a1b->mutex);
+	return ret;
+}
 static const struct v4l2_subdev_video_ops ov01a1b_video_ops = {
 	.s_stream = ov01a1b_set_stream,
 };
@@ -1044,7 +881,7 @@ static int ov01a1b_probe(struct i2c_client *client)
 #if IS_ENABLED(CONFIG_INTEL_SKL_INT3472)
 
     dev_info(dev, "\n=== OV01A1B Power Test Probe ===\n");
-    dev_info(dev, "Client address: 0x%02x\n", client->addr);
+    dev_info(dev, "Client address: 0x%02x\n", REG_CHIP_ID);
     dev_info(dev, "Adapter: %s\n", client->adapter->name);
 #else
 #error "CONFIG_INTEL_SKL_INT3472 must be enabled."
@@ -1124,40 +961,43 @@ static int ov01a1b_probe(struct i2c_client *client)
     
     /* Execute power on sequence */
     ret = ov01a1b_power_on_sequence(ov01a1b);
-    if (ret == 0) {
-        dev_info(dev, "Device is working: %d\n", ret);
+    if (ret) {
+        goto probe_error_ret;
     }
   
-    // test and get informations
-    //test_sensor_registers(ov01a1b);
-    //test_sensor_registers_extended(ov01a1b);
-    mutex_init(&ov01a1b->mutex);
-    ov01a1b->cur_mode = &supported_modes[0];
-    ret = ov01a10_init_controls(ov01a10);
-    if (ret) {
-    	dev_err(&client->dev, "failed to init controls: %d", ret);
-    	goto probe_error_v4l2_ctrl_handler_free;
-    }
+//    mutex_init(&ov01a1b->mutex);
+//    ov01a1b->cur_mode = &supported_modes[0];
+//    ret = ov01a1b_init_controls(ov01a1b);
+//    if (ret) {
+//    	dev_err(&client->dev, "failed to init controls: %d", ret);
+//    	goto error_handler_free;
+//    }
 
 
-    /* Execute power off sequence */
-    ret = ov01a1b_power_off_sequenz(ov01a1b);
-    if(ret ){
-        return -ENODEV;
-    }
-
-    dev_info(dev, "Good: Sensor not responding after power off\n");
-    dev_info(dev, "\n=== Test Complete ===\n");
+//    /* Execute power off sequence */
+//    ret = ov01a1b_power_off_sequenz(ov01a1b);
+//    if(ret ){
+//        return -ENODEV;
+//    }
+//
+//    dev_info(dev, "Good: Sensor not responding after power off\n");
+//    dev_info(dev, "\n=== Test Complete ===\n");
+//
+    // Runtime PM init and activate    
+    pm_runtime_set_autosuspend_delay(dev, 1000); // 1000 ms Timeout
+    pm_runtime_use_autosuspend(dev);
+    pm_runtime_set_active(dev); // device -> "active" 
+    pm_runtime_enable(dev); 
     
     /* Always return error to avoid binding */
     // TEST SETTING
     // return -ENODEV;
     return 0;
-error_media_entity:
-    media_entity_cleanup(&ov01a1b->sd.entity);
-error_handler_free:
-    v4l2_ctrl_handler_free(&ov01a1b->ctrl_handler);
-    mutex_destroy(&ov01a1b->mutex);
+//error_media_entity:
+//    media_entity_cleanup(&ov01a1b->sd.entity);
+//error_handler_free:
+//    v4l2_ctrl_handler_free(&ov01a1b->ctrl_handler);
+//    mutex_destroy(&ov01a1b->mutex);
 probe_error_ret:
 	return ret;
 }
