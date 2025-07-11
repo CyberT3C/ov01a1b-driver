@@ -135,7 +135,10 @@
             echo ""
             echo "📋 Available commands:"
             echo "  show-kernel-info  - Show detailed kernel information"
-            echo "  bb                - Build and run test of current modul"
+            echo "  bb                - Build current"
+            echo "  bt                - Build and test current"
+            echo "  load              - load current"
+            echo "  unload            - unload current"
             echo ""
             echo "🏗️  Development workflow:"
             echo "  1. Edit your .c files"
@@ -154,16 +157,23 @@
               echo "  Release: $KERNELRELEASE"
               echo "  Build dir: $KERNEL_DIR"
               echo "  Architecture: $(uname -m)"
-              echo "  Available configs:"
-              [ -f "$KERNEL_DIR/.config" ] && echo "    .config: ✅" || echo "    .config: ❌"
-              [ -f "$KERNEL_DIR/Module.symvers" ] && echo "    Module.symvers: ✅" || echo "    Module.symvers: ❌"
               echo ""
-              echo "  Module search path:"
-              ls -la "$KERNEL_DIR/scripts/" | head -5
             }
 
             bb() {
-              nix build && sudo ./test_module.sh "ov01a1b_register_test"
+              nix build
+            }
+
+            bt() {
+              nix build && sudo ./test_module.sh ov01a1b_ipu6_test 
+            }
+
+            load() {
+              sudo ./load.sh ov01a1b_ipu6_test 
+            }
+
+            unload() {
+              sudo ./unload.sh ov01a1b_ipu6_test 
             }
             
           '';
