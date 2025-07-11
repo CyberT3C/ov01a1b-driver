@@ -1,5 +1,4 @@
 obj-m += ov01a1b_power_test.o
 obj-m += ov01a1b_register_test.o
+obj-m += ov01a1b_ipu6_test.o
 
-# Optional: Add multiple source files
-# ov01a1b-objs := ov01a1b_main.o ov01a1b_core.o
