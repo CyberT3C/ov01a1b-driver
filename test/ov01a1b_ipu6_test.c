@@ -27,8 +27,8 @@
 
 #define DRIVER_NAME "ov01a1b"
 
-#define CHIP_ID         0x560141
-#define REG_CHIP_ID     0x10
+#define CHIP_ID                         0x560141
+#define REG_CHIP_ID		        0x300a
 
 #define OV01A1B_LINK_FREQ_400MHZ	400000000ULL
 #define OV01A1B_SCLK			40000000LL
@@ -430,11 +430,11 @@ static int ov01a1b_read_register(struct ov01a1b *ov01a1b, u16 reg, u16 len, u32 
 		return -EINVAL;
 
 	put_unaligned_be16(reg, addr_buf);
-	msgs[0].addr = REG_CHIP_ID;
+	msgs[0].addr = client->addr;
 	msgs[0].flags = 0;
 	msgs[0].len = sizeof(addr_buf);
 	msgs[0].buf = addr_buf;
-	msgs[1].addr = REG_CHIP_ID; 
+	msgs[1].addr = client->addr; 
 	msgs[1].flags = I2C_M_RD;
 	msgs[1].len = len;
 	msgs[1].buf = &data_buf[sizeof(data_buf) - len];
