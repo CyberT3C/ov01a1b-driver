@@ -1,0 +1,7 @@
+config VIDEO_OV01A1B
+	tristate "OmniVision OV01A1B sensor support"
+	depends on I2C && VIDEO_DEV
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	help
+	  OmniVision OV01A1B camera sensor driver.

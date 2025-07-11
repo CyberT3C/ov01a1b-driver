@@ -16,6 +16,9 @@ result-dev/
 debug
 debug-*
 
+# local test directories
+live-*
+
 # Nix
 result
 result-*
