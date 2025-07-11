@@ -778,6 +778,46 @@ static int ov01a1b_power_on_sequence(struct ov01a1b *ov01a1b)
 
 }
 
+static int ov01a1b_suspend(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+	int ret = 0;
+
+	mutex_lock(&ov01a1b->mutex);
+	if (ov01a1b->streaming)
+		ov01a1b_stop_streaming(ov01a1b);
+
+        ov01a1b_power_off_sequenz(ov01a1b);
+	mutex_unlock(&ov01a1b->mutex);
+
+	return 0;
+}
+
+static int ov01a1b_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+	int ret = 0;
+
+	mutex_lock(&ov01a1b->mutex);
+        ov01a1b_power_on_sequenz(ov01a1b);
+	if (!ov01a1b->streaming)
+		goto exit;
+
+	ret = ov01a10_start_streaming(ov01a1b);
+	if (ret) {
+		ov01a1b->streaming = false;
+		ov01a1b_stop_streaming_streaming(ov01a1b);
+	}
+
+exit:
+	mutex_unlock(&ov01a1b->mutex);
+	return ret;
+}
+
 ///////////////////////////////////////////////
 /////////////////////////////////////////////
 ///
@@ -1147,6 +1187,23 @@ static struct i2c_driver ov01a1b_driver = {
     .probe = ov01a1b_probe,
     .remove = ov01a1b_remove,
     .id_table = ov01a1b_id,
+};
+
+// this struct is mapping the power operations
+static const struct dev_pm_ops ov01a1b_pm_ops = {
+    // callback, wake up from "idle"
+    .runtime_resume   = ov01a1b_resume,
+
+
+    // callback, set to "idle"
+    .runtime_suspend  = ov01a1b_suspend,
+
+    // Optional, maybe for the future 
+    // .runtime_idle     = ..., 
+
+    // system Suspend/Hibernate, not runtime PM.
+    .suspend          = ov01a1b_suspend,
+    .resume           = ov01a1b_resume,
 };
 
 module_i2c_driver(ov01a1b_driver);
