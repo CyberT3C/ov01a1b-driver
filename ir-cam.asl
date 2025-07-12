@@ -38,7 +38,7 @@ DefinitionBlock ("ssdt-ircam.aml", "SSDT", 2, "CUSTOM", "IRCam", 0x00000001)
                             Package ()
                             {
                                 // Jedes Property ist ein eigenes 2-Elemente-Paket
-                                Package (0x02) { "bus-format", 0x200E },        // MEDIA_BUS_FMT_Y10_1X10
+                                Package (0x02) { "bus-format", 0x300E },        // MEDIA_BUS_FMT_SRGGB10_1X10
                                 Package (0x02) { "data-lanes", Package(1){1} }, // 1 Lane
                                 
                                 // Merke! Ein QWord-Literal ist einfach die Zahl selbst.
