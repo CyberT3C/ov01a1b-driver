@@ -93,7 +93,7 @@ pkgs.mkShell {
     }
     
     echo -e "\nSetting up environment..."
-    cd camera-drivers
+    cd debug-camera-drivers
     
     # Download sources
     download_ipu6_sources
