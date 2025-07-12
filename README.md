@@ -1,3 +1,12 @@
+# Mysterium OV01A1B with OV01A10 as main  
+.. and there is a *10 driver in the linux upstream and a *1S  
+  
+My Theory at this moment:  
+(Firs I thought S may stand for series and combines both but)  
+(RIght now I think it stands for `spectrum`)  
+  
+RGB-Cam: This OV01A10(S) is the color version.  
+IR-Cam (OVTI01AB): Actually OV01A10(B) - is the monochrom-version. Dell does not give different IDs because it's basically the same chipin different variants.  
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
@@ -93,6 +102,21 @@ Stream stop:
 
 Cam App close:
   └── close() → pm_runtime_put() → runtime_suspend → power_off
+
+
+## register
+
+
+I think this analysis is complete.
+
+### ISP Control (0x5000)
+Color-Sensor {0x5000, 0x65}
+IR-Sensor = 0x75
+
+### Format-Control-Register (0x4300):
+
+Color-Sensor: {0x4300, 0xff} -> Bayer
+IR-Sensor: Format control (0x4300) = 0xff -> Monochrom
 
 
 at some point in the future ->
