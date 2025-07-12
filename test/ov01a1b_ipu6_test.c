@@ -336,6 +336,7 @@ static const s64 link_freq_menu_items[] = {
 struct ov01a1b {
     // v4l2 layer
     struct v4l2_subdev sd;
+    struct media_pad pad;
     struct v4l2_ctrl_handler ctrl_handler;    
     // controls
     struct v4l2_ctrl *link_freq;
@@ -886,6 +887,18 @@ exit:
 	mutex_unlock(&ov01a1b->mutex);
 	return ret;
 }
+
+
+static int ov01a1b_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+{
+	struct ov01a1b *ov01a1b = to_ov01a1b(sd);
+	mutex_lock(&ov01a1b->mutex);
+	ov01a1b_update_pad_format(&supported_modes[0], v4l2_subdev_state_get_format(fh->state, 0));
+	mutex_unlock(&ov01a1b->mutex);
+	return 0;
+}
+
+
 static const struct v4l2_subdev_video_ops ov01a1b_video_ops = {
 	.s_stream = ov01a1b_set_stream,
 };
@@ -900,6 +913,15 @@ static const struct v4l2_subdev_pad_ops ov01a1b_pad_ops = {
 static const struct v4l2_subdev_ops ov01a1b_subdev_ops = {
 	.video = &ov01a1b_video_ops,
 	.pad = &ov01a1b_pad_ops,
+};
+
+
+static const struct media_entity_operations ov01a1b_subdev_entity_ops = {
+	.link_validate = v4l2_subdev_link_validate,
+};
+
+static const struct v4l2_subdev_internal_ops ov01a1b_internal_ops = {
+	.open = ov01a1b_open,
 };
 
 static int ov01a1b_test_pattern(struct ov01a1b *ov01a1b, u32 pattern)
@@ -966,6 +988,16 @@ static int ov01a1b_set_ctrl(struct v4l2_ctrl *ctrl)
 static const struct v4l2_ctrl_ops ov01a1b_ctrl_ops = {
 	.s_ctrl = ov01a1b_set_ctrl,
 };
+
+
+static int intialize_media_entity(struct ov01a1b *ov01a1b){
+    ov01a1b->sd.internal_ops = &ov01a1b_internal_ops;
+    ov01a1b->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+    ov01a1b->sd.entity.ops = &ov01a1b_subdev_entity_ops;
+    ov01a1b->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+    ov01a1b->pad.flags = MEDIA_PAD_FL_SOURCE;
+    return media_entity_pads_init(&ov01a1b->sd.entity, 1, &ov01a1b->pad);
+}
 
 static int ov01a1b_initialize_controls(struct ov01a1b *ov01a1b)
 {
@@ -1133,7 +1165,7 @@ static int ov01a1b_probe(struct i2c_client *client)
     ret = v4l2_ctrl_handler_init(&ov01a1b->ctrl_handler, 8);
     if (ret) {
     	dev_err(dev, "failed to init ctrl handler: %d", ret);
-    	goto err_mutex_destroy;
+    	goto err_destroy_mutex;
     }
 
     ret = ov01a1b_initialize_controls(ov01a1b);
@@ -1141,10 +1173,26 @@ static int ov01a1b_probe(struct i2c_client *client)
     	dev_err(dev, "failed to init controls: %d", ret);
     	goto err_free_handler;
     }
+    
+
+    ret = intialize_media_entity(ov01a1b);
+    if (ret) {
+    	dev_err(dev, "failed to init media entity: %d", ret);
+    	goto err_free_handler;
+    }    
 
     
-    // missing media entity
-    // register sensor
+    ret = v4l2_async_register_subdev_sensor(&ov01a1b->sd);
+    if (ret < 0) {
+    	dev_err(&client->dev, "failed to register V4L2 subdev: %d", ret);
+    	goto err_clean_media_entity;
+    }
+
+    // debug test
+   // v4l2_i2c_subdev_set_name(&ov01a1b->sd, client, "ov01a1s", NULL);
+    dev_info(dev, "V4L2 async subdev registered successfully\n");
+    dev_info(dev, "Subdev name: %s\n", ov01a1b->sd.name);
+    dev_info(dev, "Entity name: %s\n", ov01a1b->sd.entity.name);
 
 
     // Runtime PM init and activate    
@@ -1155,9 +1203,11 @@ static int ov01a1b_probe(struct i2c_client *client)
     
     return 0;
 
+err_clean_media_entity:
+    media_entity_cleanup(&ov01a1b->sd.entity);
 err_free_handler:
     v4l2_ctrl_handler_free(&ov01a1b->ctrl_handler);
-err_mutex_destroy:
+err_destroy_mutex:
     mutex_destroy(&ov01a1b->mutex);
 err_power_off:
     ov01a1b_suspend(dev);
