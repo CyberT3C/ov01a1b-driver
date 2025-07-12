@@ -175,6 +175,10 @@
             unload() {
               sudo ./unload.sh ov01a1b_ipu6_test 
             }
+
+            compile-asl(){
+              iasl -oa ir-cam.asl
+            }
             
           '';
         };
