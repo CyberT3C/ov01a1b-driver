@@ -1,116 +1,78 @@
-# shell.nix for camera driver development
+# shell.nix
 { pkgs ? import <nixpkgs> {} }:
 
+let
+  kernel = pkgs.linuxPackages_6_15.kernel;
+in
 pkgs.mkShell {
-  name = "camera-driver-dev";
-  
-  buildInputs = with pkgs; [
-    # Kernel development tools
-    linuxPackages_latest.kernel.dev
-    
-    # Build essentials
+  name = "ipu6-driver-dev";
+
+  nativeBuildInputs = with pkgs; [
+    # Kernel-Entwicklung. 'kernel.dev' enthält die Header und das Build-System.
+    kernel.dev
+
+    # Standard-Build-Werkzeuge
     gcc
     gnumake
-    pkg-config
-    ncurses
     
-    # Source code analysis
-    cscope
-    ctags
-    ripgrep
-    fd
-    bat
-    tree
-    
-    # Diff and patch tools
+    # Werkzeuge zur Patch-Erstellung und Code-Analyse
+    git
     diffutils
     patchutils
-    git
-    
-    # Decompression tools
-    xz
-    gzip
-    
-    # Module tools
-    kmod
-    
-    # Debug tools
-    gdb
-    strace
+    ripgrep
+    tree
+    bat
   ];
-  
+
   shellHook = ''
-    echo "Camera Driver Development Environment"
-    echo "====================================="
-    
-    # Create working directory
-    mkdir -p camera-drivers/{ov01a10,ov01a1s,ov01a1b}
-    
-    # Function to extract kernel module source
-    extract_module() {
-      local module=$1
-      local outdir=$2
-      
-      echo "Extracting $module to $outdir..."
-      
-      # Find the module
-      local modpath=$(find /nix/store -name "$module.ko.xz" -type f 2>/dev/null | grep -E "linux.*6\.15\.4" | head -1)
-      
-      if [ -n "$modpath" ]; then
-        echo "Found module at: $modpath"
-        # For now just copy it, we'll get actual source differently
-        cp "$modpath" "$outdir/"
-      else
-        echo "Module $module not found"
-      fi
-    }
-    
-    # Get kernel source if available
-    get_kernel_source() {
-      local kernel_version=$(uname -r)
-      echo "Looking for kernel source for $kernel_version..."
-      
-      # Try to find kernel source in nix store
-      local kernel_src=$(find /nix/store -maxdepth 1 -name "*linux-$kernel_version-source" -type d 2>/dev/null | head -1)
-      
-      if [ -n "$kernel_src" ]; then
-        echo "Found kernel source at: $kernel_src"
-        export KERNEL_SRC="$kernel_src"
-      else
-        echo "Kernel source not found, will try to fetch from Intel IPU6 repo"
-      fi
-    }
-    
-    # Function to download Intel IPU6 driver sources
-    download_ipu6_sources() {
-      if [ ! -d "ipu6-drivers" ]; then
-        echo "Cloning Intel IPU6 drivers repository..."
-        git clone https://github.com/intel/ipu6-drivers.git
-      else
-        echo "IPU6 drivers already cloned, updating..."
-        cd ipu6-drivers && git pull && cd ..
-      fi
-    }
-    
-    echo -e "\nSetting up environment..."
-    cd debug-camera-drivers
-    
-    # Download sources
-    download_ipu6_sources
-    
-    # Extract specific driver files
-    if [ -d "ipu6-drivers/drivers/media/i2c" ]; then
-      echo -e "\nCopying driver sources..."
-      [ -f "ipu6-drivers/drivers/media/i2c/ov01a10.c" ] && cp ipu6-drivers/drivers/media/i2c/ov01a10.c ov01a10/
-      [ -f "ipu6-drivers/drivers/media/i2c/ov01a1s.c" ] && cp ipu6-drivers/drivers/media/i2c/ov01a1s.c ov01a1s/
-      
-      echo -e "\nAvailable OV drivers:"
-      ls -la ipu6-drivers/drivers/media/i2c/ov*.c 2>/dev/null | grep -E "ov0[0-9]" || echo "No OV0x drivers found"
+    clear
+    echo "✅ Willkommen in der ipu6-Entwicklungsumgebung!"
+    echo "   Kernel-Version: ${kernel.modDirVersion}"
+    echo "--------------------------------------------------"
+
+    export KERNEL_SRC_ORIGINAL="${kernel.src}"
+    export KERNEL_DIR="${kernel.dev}/lib/modules/${kernel.modDirVersion}/build"
+
+    # Prüfen, ob die Sourcen schon kopiert wurden
+    if [ ! -d "ipu6-src" ]; then
+      echo "ℹ️  Der Quellcode für den ipu6-Treiber wurde noch nicht kopiert."
+      echo "    Da die Kernel-Sourcen ein .tar.xz-Archiv sind, müssen wir sie entpacken."
+      echo "    Führe die folgenden Befehle aus, um nur den benötigten Ordner zu extrahieren:"
+      echo
+      echo "    # 1. Erstelle das Zielverzeichnis"
+      echo "    mkdir ./ipu6-src"
+      echo
+      echo "    # 2. Entpacke nur den Intel-Treiber-Ordner dorthin"
+      echo "    tar -xf ${kernel.src} --strip-components=4 -C ./ipu6-src linux-${kernel.version}/drivers/media/pci/intel"
+      echo
+    else
+      echo "✅ Lokale Kopie des ipu6-Quellcodes in './ipu6-src' gefunden."
+      echo "   Du kannst jetzt die Dateien bearbeiten und das Modul bauen."
+      echo
+      echo "   Zum Bauen, wechsle ins Verzeichnis und nutze 'make':"
+      echo "   cd ipu6-src && make"
+      echo
     fi
     
-    echo "Useful paths:"
-    echo "  IPU6 sources: $(pwd)/ipu6-drivers"
-    echo "  Driver sources: $(pwd)/ov01a*/"
-    echo ""
+    # Hilfreiche Funktion, um einen Patch aus deinen Änderungen zu erstellen
+    create_patch() {
+      if [ ! -d "ipu6-src" ]; then
+        echo "Fehler: Das Verzeichnis 'ipu6-src' existiert nicht."
+        return 1
+      fi
+      echo "Erstelle Patch aus 'ipu6-src' nach './ipu-bridge.patch'..."
+      (
+        cd ipu6-src
+        if [ ! -d ".git" ]; then
+          git init > /dev/null
+          git add . > /dev/null
+          git commit -m "Initial ipu6 source" > /dev/null
+          echo "Git-Repository zur Änderunogsverfolgung in 'ipu6-src' initialisiert."
+        fi
+        cp ../ipu-bridge.c ./intel/ipu-bridge.c
+        git diff > ../ipu-bridge.patch
+      )
+      echo "Fertig! Patch-Datei wurde erstellt."
+    }
   '';
 }
