@@ -47,6 +47,31 @@
 #define OV01A1B_VTS_MAX			0xffff
 
 
+/* IR specific register */
+#define OV01A1B_REG_FORMAT_CTRL		0x4300
+#define OV01A1B_FORMAT_MONOCHROME	0xff
+
+
+/* Exposure controls from sensor */
+#define OV01A1B_REG_EXPOSURE		0x3501
+#define OV01A1B_EXPOSURE_MIN		4
+#define OV01A1B_EXPOSURE_MAX_MARGIN	8
+#define OV01A1B_EXPOSURE_STEP		1
+
+/* Analog gain controls from sensor */
+#define OV01A1B_REG_ANALOG_GAIN		0x3508
+#define OV01A1B_ANAL_GAIN_MIN		0x100
+#define OV01A1B_ANAL_GAIN_MAX		0x3fff
+#define OV01A1B_ANAL_GAIN_STEP		1
+#define OV01A1B_ANAL_GAIN_DEFAULT	0x100
+
+/* Test Pattern Control */
+#define OV01A1B_REG_TEST_PATTERN	0x4503
+#define OV01A1B_TEST_PATTERN_ENABLE	BIT(7)
+#define OV01A1B_TEST_PATTERN_BAR_SHIFT	0
+
+
+
 /* Common OmniVision I2C addresses to try */
 
 /*
@@ -342,6 +367,13 @@ static inline struct ov01a1b *to_ov01a1b(struct v4l2_subdev *subdev)
 
 
 
+static const char * const ov01a1b_test_pattern_menu[] = {
+	"Disabled",
+	"Color Bar",
+	"Top-Bottom Darker Color Bar",
+	"Right-Left Darker Color Bar",
+	"Color Bar type 4",
+};
 
 
 
@@ -870,6 +902,133 @@ static const struct v4l2_subdev_ops ov01a1b_subdev_ops = {
 	.pad = &ov01a1b_pad_ops,
 };
 
+static int ov01a1b_test_pattern(struct ov01a1b *ov01a1b, u32 pattern)
+{
+    if (pattern) {
+        pattern = (pattern - 1) << OV01A1B_TEST_PATTERN_BAR_SHIFT | OV01A1B_TEST_PATTERN_ENABLE;
+    }
+    return ov01a1b_write_register(ov01a1b, OV01A1B_REG_TEST_PATTERN, 1, pattern);
+}
+
+static int ov01a1b_set_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ov01a1b *ov01a1b = container_of(ctrl->handler,
+					     struct ov01a1b, ctrl_handler);
+	struct i2c_client *client = v4l2_get_subdevdata(&ov01a1b->sd); 
+	s64 exposure_max;
+	int ret = 0;
+
+	/* Propagate change of current control to all related controls */
+	if (ctrl->id == V4L2_CID_VBLANK) {
+		/* Update max exposure while meeting expected vblanking */
+		exposure_max = ov01a1b->cur_mode->height + ctrl->val -
+			       OV01A1B_EXPOSURE_MAX_MARGIN;
+		__v4l2_ctrl_modify_range(ov01a1b->exposure,
+					 ov01a1b->exposure->minimum,
+					 exposure_max, ov01a1b->exposure->step,
+					 exposure_max);
+	}
+
+	/* V4L2 controls values will be applied only when power is already up */
+	if (!pm_runtime_get_if_in_use(&client->dev))
+		return 0;
+
+	switch (ctrl->id) {
+	case V4L2_CID_ANALOGUE_GAIN:
+		ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_ANALOG_GAIN, 2, ctrl->val);
+		break;
+
+	case V4L2_CID_EXPOSURE:
+		ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_EXPOSURE, 2, ctrl->val);
+		break;
+
+	case V4L2_CID_VBLANK:
+		ret = ov01a1b_write_register(ov01a1b, OV01A1B_REG_VTS, 2, ov01a1b->cur_mode->height + ctrl->val);
+		break;
+
+	case V4L2_CID_TEST_PATTERN:
+		ret = ov01a1b_test_pattern(ov01a1b, ctrl->val);
+		break;
+
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	pm_runtime_put(&client->dev);
+
+	return ret;
+}
+
+
+
+
+static const struct v4l2_ctrl_ops ov01a1b_ctrl_ops = {
+	.s_ctrl = ov01a1b_set_ctrl,
+};
+
+static int ov01a1b_initialize_controls(struct ov01a1b *ov01a1b)
+{
+    struct v4l2_ctrl_handler *ctrl_hdlr = &ov01a1b->ctrl_handler;
+    const struct ov01a1b_mode *cur_mode;
+    s64 exposure_max, h_blank;
+    u32 vblank_min, vblank_max, vblank_default;
+    int size;
+    
+    ctrl_hdlr->lock = &ov01a1b->mutex;
+    cur_mode = ov01a1b->cur_mode;
+    size = ARRAY_SIZE(link_freq_menu_items);
+    
+    ov01a1b->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr,
+    					    &ov01a1b_ctrl_ops,
+    					    V4L2_CID_LINK_FREQ,
+    					    size - 1, 0,
+    					    link_freq_menu_items);
+    if (ov01a1b->link_freq)
+    	ov01a1b->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+    
+    ov01a1b->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &ov01a1b_ctrl_ops,
+    					V4L2_CID_PIXEL_RATE, 0,
+    					OV01A1B_SCLK, 1, OV01A1B_SCLK);
+    
+    vblank_min = cur_mode->vts_min - cur_mode->height;
+    vblank_max = OV01A1B_VTS_MAX - cur_mode->height;
+    vblank_default = cur_mode->vts_def - cur_mode->height;
+    ov01a1b->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &ov01a1b_ctrl_ops,
+    				    V4L2_CID_VBLANK, vblank_min,
+    				    vblank_max, 1, vblank_default);
+    
+    h_blank = cur_mode->hts - cur_mode->width;
+    ov01a1b->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &ov01a1b_ctrl_ops,
+    				    V4L2_CID_HBLANK, h_blank, h_blank,
+    				    1, h_blank);
+    if (ov01a1b->hblank)
+    	ov01a1b->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+    
+    v4l2_ctrl_new_std(ctrl_hdlr, &ov01a1b_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+    		  OV01A1B_ANAL_GAIN_MIN, OV01A1B_ANAL_GAIN_MAX,
+    		  OV01A1B_ANAL_GAIN_STEP, OV01A1B_ANAL_GAIN_DEFAULT);
+    
+    exposure_max = cur_mode->vts_def - OV01A1B_EXPOSURE_MAX_MARGIN;
+    ov01a1b->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &ov01a1b_ctrl_ops,
+    				      V4L2_CID_EXPOSURE,
+    				      OV01A1B_EXPOSURE_MIN,
+    				      exposure_max,
+    				      OV01A1B_EXPOSURE_STEP,
+    				      exposure_max);
+    
+    v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &ov01a1b_ctrl_ops,
+    			     V4L2_CID_TEST_PATTERN,
+    			     ARRAY_SIZE(ov01a1b_test_pattern_menu) - 1,
+    			     0, 0, ov01a1b_test_pattern_menu);
+    if (ctrl_hdlr->error)
+    	return ctrl_hdlr->error;
+    
+    ov01a1b->sd.ctrl_handler = ctrl_hdlr;
+    
+    return 0;
+}
+
 
 
 static int ov01a1b_probe(struct i2c_client *client)
@@ -964,44 +1123,46 @@ static int ov01a1b_probe(struct i2c_client *client)
     /* Execute power on sequence */
     ret = ov01a1b_power_on_sequence(ov01a1b);
     if (ret) {
-        goto probe_error_ret;
+        goto err_ret;
     }
   
     mutex_init(&ov01a1b->mutex);
-//    ov01a1b->cur_mode = &supported_modes[0];
-//    ret = ov01a1b_init_controls(ov01a1b);
-//    if (ret) {
-//    	dev_err(&client->dev, "failed to init controls: %d", ret);
-//    	goto error_handler_free;
-//    }
+    ov01a1b->cur_mode = &supported_modes[0];
 
 
-//    /* Execute power off sequence */
-//    ret = ov01a1b_power_off_sequenz(ov01a1b);
-//    if(ret ){
-//        return -ENODEV;
-//    }
-//
-//    dev_info(dev, "Good: Sensor not responding after power off\n");
-//    dev_info(dev, "\n=== Test Complete ===\n");
-//
+    ret = v4l2_ctrl_handler_init(&ov01a1b->ctrl_handler, 8);
+    if (ret) {
+    	dev_err(dev, "failed to init ctrl handler: %d", ret);
+    	goto err_mutex_destroy;
+    }
+
+    ret = ov01a1b_initialize_controls(ov01a1b);
+    if (ret) {
+    	dev_err(dev, "failed to init controls: %d", ret);
+    	goto err_free_handler;
+    }
+
+    
+    // missing media entity
+    // register sensor
+
+
     // Runtime PM init and activate    
     pm_runtime_set_autosuspend_delay(dev, 1000); // 1000 ms Timeout
     pm_runtime_use_autosuspend(dev);
     pm_runtime_set_active(dev); // device -> "active" 
     pm_runtime_enable(dev); 
     
-    /* Always return error to avoid binding */
-    // TEST SETTING
-    // return -ENODEV;
     return 0;
-//error_media_entity:
-//    media_entity_cleanup(&ov01a1b->sd.entity);
-//error_handler_free:
-//    v4l2_ctrl_handler_free(&ov01a1b->ctrl_handler);
-//    mutex_destroy(&ov01a1b->mutex);
-probe_error_ret:
-	return ret;
+
+err_free_handler:
+    v4l2_ctrl_handler_free(&ov01a1b->ctrl_handler);
+err_mutex_destroy:
+    mutex_destroy(&ov01a1b->mutex);
+err_power_off:
+    ov01a1b_suspend(dev);
+err_ret:
+    return ret;
 }
 
 static void ov01a1b_remove(struct i2c_client *client)
